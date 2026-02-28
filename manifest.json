@@ -1,0 +1,8 @@
+{
+  "plugin_id":   "simkl",
+  "name":        "Simkl",
+  "version":     "1.0.0",
+  "author":      "Michael Beck",
+  "description": "Import watch history, ratings and watchlist from Simkl",
+  "entry_type":  "Chronicle.Plugin.Simkl.SimklImportProvider"
+}
