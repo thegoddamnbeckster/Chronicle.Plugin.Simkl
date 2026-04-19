@@ -105,3 +105,35 @@ internal record HistoryEpisode(
     [property: JsonPropertyName("season")]  int  Season,
     [property: JsonPropertyName("episode")] int  Episode
 );
+
+// ── Search / metadata ─────────────────────────────────────────────────────────
+
+/// <summary>Single item returned by GET /search/{type}.</summary>
+internal record SimklSearchItem(
+    [property: JsonPropertyName("title")]  string   Title,
+    [property: JsonPropertyName("year")]   int?     Year,
+    [property: JsonPropertyName("ids")]    SimklIds Ids,
+    [property: JsonPropertyName("poster")] string?  Poster
+);
+
+/// <summary>Full detail response from GET /movies/{id}?extended=full or GET /tv/{id}?extended=full.</summary>
+internal record SimklFullMedia(
+    [property: JsonPropertyName("title")]    string        Title,
+    [property: JsonPropertyName("year")]     int?          Year,
+    [property: JsonPropertyName("ids")]      SimklIds      Ids,
+    [property: JsonPropertyName("overview")] string?       Overview,
+    [property: JsonPropertyName("runtime")]  int?          Runtime,
+    [property: JsonPropertyName("genres")]   List<string>? Genres,
+    [property: JsonPropertyName("ratings")]  SimklRatings? Ratings,
+    [property: JsonPropertyName("poster")]   string?       Poster,
+    [property: JsonPropertyName("fanart")]   string?       Fanart
+);
+
+internal record SimklRatings(
+    [property: JsonPropertyName("simkl")] SimklRatingDetail? Simkl
+);
+
+internal record SimklRatingDetail(
+    [property: JsonPropertyName("rating")] double? Rating,
+    [property: JsonPropertyName("votes")]  int?    Votes
+);

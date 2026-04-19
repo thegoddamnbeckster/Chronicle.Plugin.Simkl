@@ -1,9 +1,15 @@
 {
-  "plugin_id":   "simkl",
-  "name":        "Simkl",
-  "version":     "1.0.0",
-  "author":      "Michael Beck",
-  "description": "Import watch history, ratings and watchlist from Simkl",
-  "entry_type":  "Chronicle.Plugin.Simkl.SimklImportProvider",
-  "iconUrl":     "https://simkl.com/favicon.ico"
+  "plugin_id":             "chronicle.plugin.simkl",
+  "name":                  "SIMKL",
+  "version":               "1.0.0",
+  "author":                "Chronicle Contributors",
+  "description":           "Metadata for Movies, TV, and Anime from SIMKL. Requires a free SIMKL API Client ID.",
+  "min_chronicle_version": "1.0.0",
+  "entry_type":            "Chronicle.Plugin.Simkl.SimklMetadataProvider",
+  "iconUrl":               "https://simkl.com/favicon.ico",
+  "brandColorLight":       "#000000",
+  "brandColorDark":        "#FFFFFF",
+  "fixMatchHint":          "Enter SIMKL ID, IMDB ID (tt...), or SIMKL URL.",
+  "supported_media_types": ["movie", "movies", "tv", "anime"],
+  "background_tasks":      []
 }

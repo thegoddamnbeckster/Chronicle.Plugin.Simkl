@@ -110,6 +110,36 @@ internal sealed class SimklClient : IDisposable
         return (items, totalPages);
     }
 
+    // ── Metadata search / fetch ───────────────────────────────────────────────
+
+    /// <summary>Searches SIMKL for items of <paramref name="type"/> ("movie", "tv", or "anime").</summary>
+    internal async Task<List<SimklSearchItem>> SearchMediaAsync(
+        string type, string query, CancellationToken ct)
+    {
+        var encoded = Uri.EscapeDataString(query);
+        var response = await GetWithRateLimitAsync($"/search/{type}?q={encoded}", ct);
+        if (!response.IsSuccessStatusCode) return [];
+        return await response.Content.ReadFromJsonAsync<List<SimklSearchItem>>(ct) ?? [];
+    }
+
+    /// <summary>Returns full metadata for a movie by its SIMKL ID.</summary>
+    internal async Task<SimklFullMedia?> GetMovieAsync(int simklId, CancellationToken ct)
+    {
+        var response = await GetWithRateLimitAsync($"/movies/{simklId}?extended=full", ct);
+        return response.IsSuccessStatusCode
+            ? await response.Content.ReadFromJsonAsync<SimklFullMedia>(ct)
+            : null;
+    }
+
+    /// <summary>Returns full metadata for a TV show or anime by its SIMKL ID.</summary>
+    internal async Task<SimklFullMedia?> GetShowAsync(int simklId, CancellationToken ct)
+    {
+        var response = await GetWithRateLimitAsync($"/tv/{simklId}?extended=full", ct);
+        return response.IsSuccessStatusCode
+            ? await response.Content.ReadFromJsonAsync<SimklFullMedia>(ct)
+            : null;
+    }
+
     internal async Task<bool> PingAsync(CancellationToken ct)
     {
         try
