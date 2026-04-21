@@ -284,6 +284,40 @@ public sealed class SimklImportProvider : IImportProvider
         return await client.PingAsync(ct);
     }
 
+    // ── Optional enrichment hooks ─────────────────────────────────────────────
+
+    public async Task<ImportedItemMetadata?> GetItemMetadataAsync(
+        string externalId, string mediaType, CancellationToken ct = default)
+    {
+        if (!TryParseSimklId(externalId, out var simklId))
+            return null;
+
+        EnsureAuthenticated();
+        var client = GetOrCreateClient();
+
+        var isMovie   = mediaType.Equals("movie", StringComparison.OrdinalIgnoreCase);
+        var tmdbPrefix = isMovie ? "movie" : "tv";
+
+        var media = isMovie
+            ? await client.GetMovieAsync(simklId, ct)
+            : await client.GetShowAsync(simklId, ct);
+
+        if (media is null) return null;
+
+        var additionalIds = new Dictionary<string, string>();
+        if (media.Ids.Tmdb is not null) additionalIds["tmdb"] = $"{tmdbPrefix}:{media.Ids.Tmdb}";
+        if (media.Ids.Imdb is not null) additionalIds["imdb"] = media.Ids.Imdb;
+        if (media.Ids.Tvdb is not null) additionalIds["tvdb"] = media.Ids.Tvdb;
+
+        return new ImportedItemMetadata(
+            Title:          media.Title,
+            Year:           media.Year,
+            Overview:       media.Overview,
+            PosterUrl:      media.Poster,
+            RuntimeMinutes: media.Runtime,
+            AdditionalIds:  additionalIds);
+    }
+
     // ── Mapping helpers ───────────────────────────────────────────────────────
 
     private static ImportedWatchEvent? MapHistoryEntry(HistoryEntry entry)
@@ -341,6 +375,17 @@ public sealed class SimklImportProvider : IImportProvider
 
     private static DateTimeOffset? TryParseOffset(string? s) =>
         DateTimeOffset.TryParse(s, out var dt) ? dt : null;
+
+    /// <summary>
+    /// Parses a Simkl ExternalId of the form "simkl:12345" into the numeric Simkl ID.
+    /// Returns false if the format is unrecognised or the ID is not an integer.
+    /// </summary>
+    private static bool TryParseSimklId(string externalId, out int simklId)
+    {
+        simklId = 0;
+        var parts = externalId.Split(':');
+        return parts.Length >= 2 && int.TryParse(parts[1], out simklId);
+    }
 
     // ── Guard helpers ─────────────────────────────────────────────────────────
 
