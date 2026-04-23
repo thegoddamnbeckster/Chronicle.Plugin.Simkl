@@ -336,14 +336,26 @@ public sealed class SimklImportProvider : IImportProvider
                     WatchedAt:       watchedAt,
                     ProgressPercent: 100.0),
 
+            "show" when entry.Show is not null && entry.Episode is not null =>
+                new ImportedWatchEvent(
+                    ExternalId:      $"simkl:{entry.Show.Ids.Simkl}:s{entry.Episode.Season}e{entry.Episode.Episode}",
+                    AdditionalIds:   BuildIds(entry.Show.Ids),
+                    MediaType:       "tv_episode",
+                    Title:           $"S{entry.Episode.Season:D2}E{entry.Episode.Episode:D2}",
+                    Year:            entry.Show.Year,
+                    WatchedAt:       watchedAt,
+                    ProgressPercent: 100.0,
+                    ShowExternalId:  $"simkl:{entry.Show.Ids.Simkl}",
+                    ShowTitle:       entry.Show.Title,
+                    SeasonNumber:    entry.Episode.Season,
+                    EpisodeNumber:   entry.Episode.Episode),
+
             "show" when entry.Show is not null =>
                 new ImportedWatchEvent(
                     ExternalId:      $"simkl:{entry.Show.Ids.Simkl}",
                     AdditionalIds:   BuildIds(entry.Show.Ids),
-                    MediaType:       entry.Episode is not null ? "tv_episode" : "tv",
-                    Title:           entry.Episode is not null
-                        ? $"{entry.Show.Title} S{entry.Episode.Season:D2}E{entry.Episode.Episode:D2}"
-                        : entry.Show.Title,
+                    MediaType:       "tv",
+                    Title:           entry.Show.Title,
                     Year:            entry.Show.Year,
                     WatchedAt:       watchedAt,
                     ProgressPercent: 100.0),
