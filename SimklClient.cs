@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text.Json;
 
 namespace Chronicle.Plugin.Simkl;
 
@@ -105,8 +106,12 @@ internal sealed class SimklClient : IDisposable
         if (response.Headers.TryGetValues("X-Pagination-Page-Count", out var vals))
             int.TryParse(vals.FirstOrDefault(), out totalPages);
 
-        var items = (await response.Content.ReadFromJsonAsync<List<HistoryEntry>>(ct))
-                    ?? new List<HistoryEntry>();
+        var body = await response.Content.ReadAsStringAsync(ct);
+        List<HistoryEntry> items;
+        if (string.IsNullOrWhiteSpace(body) || !body.TrimStart().StartsWith('['))
+            items = [];   // SIMKL returns {} (empty object) when there is no history
+        else
+            items = JsonSerializer.Deserialize<List<HistoryEntry>>(body) ?? [];
         return (items, totalPages);
     }
 
