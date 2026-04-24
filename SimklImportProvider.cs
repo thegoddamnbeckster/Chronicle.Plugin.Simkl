@@ -200,7 +200,7 @@ public sealed class SimklImportProvider : IImportProvider
 
             result.Add(new ImportedWatchEvent(
                 ExternalId:      $"simkl:{m.Movie.Ids.Simkl}",
-                AdditionalIds:   BuildIds(m.Movie.Ids),
+                AdditionalIds:   BuildIds(m.Movie.Ids, "movie"),
                 MediaType:       "movie",
                 Title:           m.Movie.Title,
                 Year:            m.Movie.Year,
@@ -218,7 +218,7 @@ public sealed class SimklImportProvider : IImportProvider
 
             result.Add(new ImportedWatchEvent(
                 ExternalId:      $"simkl:{s.Show.Ids.Simkl}",
-                AdditionalIds:   BuildIds(s.Show.Ids),
+                AdditionalIds:   BuildIds(s.Show.Ids, "tv"),
                 MediaType:       "tv",
                 Title:           s.Show.Title,
                 Year:            s.Show.Year,
@@ -236,7 +236,7 @@ public sealed class SimklImportProvider : IImportProvider
 
             result.Add(new ImportedWatchEvent(
                 ExternalId:      $"simkl:{a.Show.Ids.Simkl}",
-                AdditionalIds:   BuildIds(a.Show.Ids),
+                AdditionalIds:   BuildIds(a.Show.Ids, "anime"),
                 MediaType:       "anime",
                 Title:           a.Show.Title,
                 Year:            a.Show.Year,
@@ -261,7 +261,7 @@ public sealed class SimklImportProvider : IImportProvider
             if (m.UserRating.HasValue && m.UserRating > 0)
                 result.Add(new ImportedRating(
                     ExternalId:    $"simkl:{m.Movie.Ids.Simkl}",
-                    AdditionalIds: BuildIds(m.Movie.Ids),
+                    AdditionalIds: BuildIds(m.Movie.Ids, "movie"),
                     MediaType:     "movie",
                     Title:         m.Movie.Title,
                     Year:          m.Movie.Year,
@@ -274,7 +274,7 @@ public sealed class SimklImportProvider : IImportProvider
             if (s.UserRating.HasValue && s.UserRating > 0)
                 result.Add(new ImportedRating(
                     ExternalId:    $"simkl:{s.Show.Ids.Simkl}",
-                    AdditionalIds: BuildIds(s.Show.Ids),
+                    AdditionalIds: BuildIds(s.Show.Ids, "tv"),
                     MediaType:     "tv",
                     Title:         s.Show.Title,
                     Year:          s.Show.Year,
@@ -287,7 +287,7 @@ public sealed class SimklImportProvider : IImportProvider
             if (a.UserRating.HasValue && a.UserRating > 0)
                 result.Add(new ImportedRating(
                     ExternalId:    $"simkl:{a.Show.Ids.Simkl}",
-                    AdditionalIds: BuildIds(a.Show.Ids),
+                    AdditionalIds: BuildIds(a.Show.Ids, "anime"),
                     MediaType:     "anime",
                     Title:         a.Show.Title,
                     Year:          a.Show.Year,
@@ -316,7 +316,7 @@ public sealed class SimklImportProvider : IImportProvider
             var addedAt = TryParseOffset(m.AddedToWatchlistAt) ?? DateTimeOffset.UtcNow;
             result.Add(new ImportedWatchlistEntry(
                 ExternalId:    $"simkl:{m.Movie.Ids.Simkl}",
-                AdditionalIds: BuildIds(m.Movie.Ids),
+                AdditionalIds: BuildIds(m.Movie.Ids, "movie"),
                 MediaType:     "movie",
                 Title:         m.Movie.Title,
                 Year:          m.Movie.Year,
@@ -329,7 +329,7 @@ public sealed class SimklImportProvider : IImportProvider
             var addedAt = TryParseOffset(s.AddedToWatchlistAt) ?? DateTimeOffset.UtcNow;
             result.Add(new ImportedWatchlistEntry(
                 ExternalId:    $"simkl:{s.Show.Ids.Simkl}",
-                AdditionalIds: BuildIds(s.Show.Ids),
+                AdditionalIds: BuildIds(s.Show.Ids, "tv"),
                 MediaType:     "tv",
                 Title:         s.Show.Title,
                 Year:          s.Show.Year,
@@ -342,7 +342,7 @@ public sealed class SimklImportProvider : IImportProvider
             var addedAt = TryParseOffset(a.AddedToWatchlistAt) ?? DateTimeOffset.UtcNow;
             result.Add(new ImportedWatchlistEntry(
                 ExternalId:    $"simkl:{a.Show.Ids.Simkl}",
-                AdditionalIds: BuildIds(a.Show.Ids),
+                AdditionalIds: BuildIds(a.Show.Ids, "anime"),
                 MediaType:     "anime",
                 Title:         a.Show.Title,
                 Year:          a.Show.Year,
@@ -406,7 +406,7 @@ public sealed class SimklImportProvider : IImportProvider
             "movie" when entry.Movie is not null =>
                 new ImportedWatchEvent(
                     ExternalId:      $"simkl:{entry.Movie.Ids.Simkl}",
-                    AdditionalIds:   BuildIds(entry.Movie.Ids),
+                    AdditionalIds:   BuildIds(entry.Movie.Ids, "movie"),
                     MediaType:       "movie",
                     Title:           entry.Movie.Title,
                     Year:            entry.Movie.Year,
@@ -416,7 +416,7 @@ public sealed class SimklImportProvider : IImportProvider
             "show" when entry.Show is not null && entry.Episode is not null =>
                 new ImportedWatchEvent(
                     ExternalId:      $"simkl:{entry.Show.Ids.Simkl}:s{entry.Episode.Season}e{entry.Episode.Episode}",
-                    AdditionalIds:   BuildIds(entry.Show.Ids),
+                    AdditionalIds:   BuildIds(entry.Show.Ids, "tv"),
                     MediaType:       "tv_episode",
                     Title:           $"S{entry.Episode.Season:D2}E{entry.Episode.Episode:D2}",
                     Year:            entry.Show.Year,
@@ -430,7 +430,7 @@ public sealed class SimklImportProvider : IImportProvider
             "show" when entry.Show is not null =>
                 new ImportedWatchEvent(
                     ExternalId:      $"simkl:{entry.Show.Ids.Simkl}",
-                    AdditionalIds:   BuildIds(entry.Show.Ids),
+                    AdditionalIds:   BuildIds(entry.Show.Ids, "tv"),
                     MediaType:       "tv",
                     Title:           entry.Show.Title,
                     Year:            entry.Show.Year,
@@ -440,7 +440,7 @@ public sealed class SimklImportProvider : IImportProvider
             "anime" when entry.Show is not null && entry.Episode is not null =>
                 new ImportedWatchEvent(
                     ExternalId:      $"simkl:{entry.Show.Ids.Simkl}:s{entry.Episode.Season}e{entry.Episode.Episode}",
-                    AdditionalIds:   BuildIds(entry.Show.Ids),
+                    AdditionalIds:   BuildIds(entry.Show.Ids, "anime"),
                     MediaType:       "anime_episode",
                     Title:           $"S{entry.Episode.Season:D2}E{entry.Episode.Episode:D2}",
                     Year:            entry.Show.Year,
@@ -454,7 +454,7 @@ public sealed class SimklImportProvider : IImportProvider
             "anime" when entry.Show is not null =>
                 new ImportedWatchEvent(
                     ExternalId:      $"simkl:{entry.Show.Ids.Simkl}",
-                    AdditionalIds:   BuildIds(entry.Show.Ids),
+                    AdditionalIds:   BuildIds(entry.Show.Ids, "anime"),
                     MediaType:       "anime",
                     Title:           entry.Show.Title,
                     Year:            entry.Show.Year,
@@ -465,14 +465,29 @@ public sealed class SimklImportProvider : IImportProvider
         };
     }
 
-    private static IReadOnlyDictionary<string, string> BuildIds(SimklIds ids)
+    /// <summary>
+    /// Builds the AdditionalIds dictionary from a SIMKL ID set.
+    /// The TMDB ID is stored with the required "movie:" or "tv:" prefix so
+    /// the TMDB metadata plugin can look it up without reformatting.
+    /// </summary>
+    private static IReadOnlyDictionary<string, string> BuildIds(SimklIds ids, string mediaType)
     {
         var d = new Dictionary<string, string>();
-        if (ids.Simkl.HasValue)      d["simkl"] = ids.Simkl.Value.ToString();
-        if (ids.Imdb  is not null)   d["imdb"]  = ids.Imdb;
-        if (ids.Tmdb  is not null)   d["tmdb"]  = ids.Tmdb;
-        if (ids.Tvdb  is not null)   d["tvdb"]  = ids.Tvdb;
-        if (ids.Mal   is not null)   d["mal"]   = ids.Mal;
+        if (ids.Simkl.HasValue) d["simkl"] = ids.Simkl.Value.ToString();
+        if (ids.Imdb is not null) d["imdb"] = ids.Imdb;
+        if (ids.Tmdb is not null)
+        {
+            // TMDB plugin expects "movie:{id}" or "tv:{id}" — never a bare numeric string.
+            var tmdbPrefix = mediaType switch
+            {
+                "movie"                                          => "movie",
+                "tv" or "tv_episode" or "anime" or "anime_episode" => "tv",
+                _                                               => "movie",
+            };
+            d["tmdb"] = $"{tmdbPrefix}:{ids.Tmdb}";
+        }
+        if (ids.Tvdb is not null) d["tvdb"] = ids.Tvdb;
+        if (ids.Mal  is not null) d["mal"]  = ids.Mal;
         return d;
     }
 
