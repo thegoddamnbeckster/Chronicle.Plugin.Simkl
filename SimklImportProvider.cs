@@ -55,7 +55,7 @@ public sealed class SimklImportProvider : IImportProvider
             {
                 Key         = KeyClientId,
                 Label       = "Client ID",
-                Description = "Your Simkl application client ID from https://simkl.com/settings/developer",
+                Description = "Your Simkl Client ID from https://simkl.com/settings/developer — use the 'Client ID' value (the first one), NOT the 'Client Secret'.",
                 Type        = SettingType.Text,
                 Required    = true,
             },
@@ -103,7 +103,7 @@ public sealed class SimklImportProvider : IImportProvider
             UserCode:               response.UserCode,
             VerificationUrl:        directUrl,
             ExpiresInSeconds:       response.ExpiresIn,
-            PollingIntervalSeconds: response.Interval > 0 ? response.Interval : 5,
+            PollingIntervalSeconds: Math.Max(response.Interval > 0 ? response.Interval : 5, 5),
             PollCode:               response.UserCode   // Simkl reuses UserCode as the poll key
         );
     }
@@ -153,6 +153,10 @@ public sealed class SimklImportProvider : IImportProvider
         var client = GetOrCreateClient();
         var result = new List<ImportedWatchEvent>();
 
+        // Collect simkl IDs already seen via history so we don't double-add from all-items.
+        var seenSimklIds = new HashSet<int>();
+
+        // ── Stage 1: timestamped check-in history (/sync/history) ────────────
         var page = 1;
         int totalPages;
 
@@ -164,13 +168,81 @@ public sealed class SimklImportProvider : IImportProvider
             foreach (var entry in items)
             {
                 var mapped = MapHistoryEntry(entry);
-                if (mapped is not null)
-                    result.Add(mapped);
+                if (mapped is null) continue;
+
+                result.Add(mapped);
+
+                // Track which Simkl IDs we already have from history.
+                if (entry.Movie?.Ids.Simkl is int mId) seenSimklIds.Add(mId);
+                if (entry.Show?.Ids.Simkl  is int sId) seenSimklIds.Add(sId);
             }
 
             page++;
         }
         while (page <= totalPages);
+
+        // ── Stage 2: status-based completions (/sync/all-items) ──────────────
+        // Many SIMKL users mark items "completed" via status change (e.g. bulk Trakt
+        // import) rather than via check-in, so those items never appear in /sync/history.
+        // We pull all-items and add any "completed" entries that weren't already in history,
+        // using last_watched_at (or UtcNow as fallback) as the watch timestamp.
+        const string completedStatus = "completed";
+
+        var all = await client.GetAllItemsAsync(ct);
+
+        foreach (var m in all.Movies ?? [])
+        {
+            if (!m.Status.Equals(completedStatus, StringComparison.OrdinalIgnoreCase)) continue;
+            if (m.Movie.Ids.Simkl.HasValue && seenSimklIds.Contains(m.Movie.Ids.Simkl.Value)) continue;
+
+            var watchedAt = TryParseOffset(m.LastWatchedAt) ?? DateTimeOffset.UtcNow;
+            if (since.HasValue && watchedAt < since.Value) continue;
+
+            result.Add(new ImportedWatchEvent(
+                ExternalId:      $"simkl:{m.Movie.Ids.Simkl}",
+                AdditionalIds:   BuildIds(m.Movie.Ids),
+                MediaType:       "movie",
+                Title:           m.Movie.Title,
+                Year:            m.Movie.Year,
+                WatchedAt:       watchedAt,
+                ProgressPercent: 100.0));
+        }
+
+        foreach (var s in all.Shows ?? [])
+        {
+            if (!s.Status.Equals(completedStatus, StringComparison.OrdinalIgnoreCase)) continue;
+            if (s.Show.Ids.Simkl.HasValue && seenSimklIds.Contains(s.Show.Ids.Simkl.Value)) continue;
+
+            var watchedAt = TryParseOffset(s.LastWatchedAt) ?? DateTimeOffset.UtcNow;
+            if (since.HasValue && watchedAt < since.Value) continue;
+
+            result.Add(new ImportedWatchEvent(
+                ExternalId:      $"simkl:{s.Show.Ids.Simkl}",
+                AdditionalIds:   BuildIds(s.Show.Ids),
+                MediaType:       "tv",
+                Title:           s.Show.Title,
+                Year:            s.Show.Year,
+                WatchedAt:       watchedAt,
+                ProgressPercent: 100.0));
+        }
+
+        foreach (var a in all.Anime ?? [])
+        {
+            if (!a.Status.Equals(completedStatus, StringComparison.OrdinalIgnoreCase)) continue;
+            if (a.Show.Ids.Simkl.HasValue && seenSimklIds.Contains(a.Show.Ids.Simkl.Value)) continue;
+
+            var watchedAt = TryParseOffset(a.LastWatchedAt) ?? DateTimeOffset.UtcNow;
+            if (since.HasValue && watchedAt < since.Value) continue;
+
+            result.Add(new ImportedWatchEvent(
+                ExternalId:      $"simkl:{a.Show.Ids.Simkl}",
+                AdditionalIds:   BuildIds(a.Show.Ids),
+                MediaType:       "anime",
+                Title:           a.Show.Title,
+                Year:            a.Show.Year,
+                WatchedAt:       watchedAt,
+                ProgressPercent: 100.0));
+        }
 
         return result;
     }

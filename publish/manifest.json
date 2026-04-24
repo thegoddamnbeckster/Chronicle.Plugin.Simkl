@@ -1,0 +1,34 @@
+{
+  "plugin_id":             "chronicle.plugin.simkl",
+  "name":                  "SIMKL",
+  "version":               "1.1.0",
+  "author":                "Chronicle Contributors",
+  "description":           "Metadata for Movies, TV, and Anime from SIMKL. Requires a free SIMKL API Client ID.",
+  "min_chronicle_version": "1.0.0",
+  "entry_type":            "Chronicle.Plugin.Simkl.SimklMetadataProvider",
+  "iconUrl":               "https://simkl.com/favicon.ico",
+  "brandColorLight":       "#000000",
+  "brandColorDark":        "#FFFFFF",
+  "fixMatchHint":          "Enter SIMKL ID, IMDB ID (tt...), or SIMKL URL.",
+  "supported_media_types": ["movie", "movies", "tv", "anime"],
+  "background_tasks": [
+    {
+      "task_id":                  "import-all",
+      "display_name":             "Import All from SIMKL",
+      "description":              "One-time full import of your entire SIMKL watch history, ratings, and watchlist.",
+      "default_cron":             "",
+      "default_enabled":          false,
+      "schedulable":              false,
+      "run_confirmation_title":   "Import everything from SIMKL?",
+      "run_confirmation_message": "This pulls your full SIMKL history and may take several minutes. Existing records will not be duplicated."
+    },
+    {
+      "task_id":         "delta-sync",
+      "display_name":    "Delta Sync",
+      "description":     "Pulls new watch events, ratings, and watchlist changes from SIMKL since the last sync.",
+      "default_cron":    "0 3 * * *",
+      "default_enabled": true,
+      "schedulable":     true
+    }
+  ]
+}
