@@ -94,9 +94,14 @@ public sealed class SimklImportProvider : IImportProvider
         // Store the user code so PollAuthAsync can use it as the poll code.
         _pendingUserCode = response.UserCode;
 
+        // SIMKL's verification_url is the base page (https://simkl.com/pin).
+        // Appending the user_code produces the direct approve/deny URL
+        // (https://simkl.com/pin/36B23) so the user doesn't have to type the PIN manually.
+        var directUrl = $"{response.VerificationUrl.TrimEnd('/')}/{response.UserCode}";
+
         return new DeviceAuthStart(
             UserCode:               response.UserCode,
-            VerificationUrl:        response.VerificationUrl,
+            VerificationUrl:        directUrl,
             ExpiresInSeconds:       response.ExpiresIn,
             PollingIntervalSeconds: response.Interval > 0 ? response.Interval : 5,
             PollCode:               response.UserCode   // Simkl reuses UserCode as the poll key
