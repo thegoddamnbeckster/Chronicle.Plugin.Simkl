@@ -106,6 +106,38 @@ internal record HistoryEpisode(
     [property: JsonPropertyName("episode")] int  Episode
 );
 
+// ── /sync/all-items/{type}?extended=full ─────────────────────────────────────
+
+/// <summary>
+/// Extended show/anime entry returned when extended=full is requested.
+/// Includes a Seasons list so individual watched episodes can be reconstructed.
+/// Both "shows" and "anime" entries share this shape.
+/// </summary>
+internal record AllItemsItemExtended(
+    [property: JsonPropertyName("status")]                string                        Status,
+    [property: JsonPropertyName("last_watched_at")]       string?                       LastWatchedAt,
+    [property: JsonPropertyName("user_rating")]           int?                          UserRating,
+    [property: JsonPropertyName("added_to_watchlist_at")] string?                       AddedToWatchlistAt,
+    [property: JsonPropertyName("show")]                  AllItemsShowInfo              Show,
+    [property: JsonPropertyName("seasons")]               List<AllItemsSeasonExtended>? Seasons
+);
+
+internal record AllItemsSeasonExtended(
+    [property: JsonPropertyName("number")]   int                          Number,
+    [property: JsonPropertyName("episodes")] List<AllItemsEpisodeExtended>? Episodes
+);
+
+internal record AllItemsEpisodeExtended(
+    [property: JsonPropertyName("number")]     int     Number,
+    [property: JsonPropertyName("watched_at")] string? WatchedAt
+);
+
+/// <summary>Wrapper used when deserialising /sync/all-items/{type}?extended=full.</summary>
+internal record AllItemsExtendedWrapper(
+    [property: JsonPropertyName("shows")] List<AllItemsItemExtended>? Shows,
+    [property: JsonPropertyName("anime")] List<AllItemsItemExtended>? Anime
+);
+
 // ── Search / metadata ─────────────────────────────────────────────────────────
 
 /// <summary>Single item returned by GET /search/{type}.</summary>

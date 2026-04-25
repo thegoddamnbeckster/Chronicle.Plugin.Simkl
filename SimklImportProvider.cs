@@ -153,8 +153,9 @@ public sealed class SimklImportProvider : IImportProvider
         var client = GetOrCreateClient();
         var result = new List<ImportedWatchEvent>();
 
-        // Collect simkl IDs already seen via history so we don't double-add from all-items.
-        var seenSimklIds = new HashSet<int>();
+        // Track every synthetic ExternalId already added from history so Stage 2
+        // never double-counts check-ins that are also visible in all-items.
+        var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // ── Stage 1: timestamped check-in history (/sync/history) ────────────
         var page = 1;
@@ -169,37 +170,52 @@ public sealed class SimklImportProvider : IImportProvider
             {
                 var mapped = MapHistoryEntry(entry);
                 if (mapped is null) continue;
-
                 result.Add(mapped);
-
-                // Track which Simkl IDs we already have from history.
-                if (entry.Movie?.Ids.Simkl is int mId) seenSimklIds.Add(mId);
-                if (entry.Show?.Ids.Simkl  is int sId) seenSimklIds.Add(sId);
+                seenKeys.Add(mapped.ExternalId);
             }
 
             page++;
         }
         while (page <= totalPages);
 
-        // ── Stage 2: status-based completions (/sync/all-items) ──────────────
-        // Many SIMKL users mark items "completed" via status change (e.g. bulk Trakt
-        // import) rather than via check-in, so those items never appear in /sync/history.
-        // We pull all-items and add any "completed" entries that weren't already in history,
-        // using last_watched_at (or UtcNow as fallback) as the watch timestamp.
-        const string completedStatus = "completed";
+        // ── Stage 2: status-based and extended episode data ───────────────────
+        //
+        // Many SIMKL users never do individual check-ins — they imported from Trakt,
+        // or just marked whole shows/movies "completed". Those items never appear in
+        // /sync/history. We handle three sub-cases:
+        //
+        //   Movies  → /sync/all-items (movies list, status="completed")
+        //   Shows   → /sync/all-items/shows?extended=full  (seasons[].episodes[])
+        //   Anime   → /sync/all-items/anime?extended=full  (seasons[].episodes[])
+        //
+        // The extended endpoints give us per-episode data even for bulk-completed shows,
+        // which lets SyncOrchestrationService build the full Show→Season→Episode tree.
 
-        var all = await client.GetAllItemsAsync(ct);
+        var moviesTask    = client.GetAllItemsAsync(ct);         // movies node only needed
+        var showsExtTask  = client.GetShowsExtendedAsync(ct);
+        var animeExtTask  = client.GetAnimeExtendedAsync(ct);
+        await Task.WhenAll(moviesTask, showsExtTask, animeExtTask);
 
-        foreach (var m in all.Movies ?? [])
+        var allItems  = moviesTask.Result;
+        var showsExt  = showsExtTask.Result;
+        var animeExt  = animeExtTask.Result;
+
+        const string completed = "completed";
+
+        // ── Movies ────────────────────────────────────────────────────────────
+        foreach (var m in allItems.Movies ?? [])
         {
-            if (!m.Status.Equals(completedStatus, StringComparison.OrdinalIgnoreCase)) continue;
-            if (m.Movie.Ids.Simkl.HasValue && seenSimklIds.Contains(m.Movie.Ids.Simkl.Value)) continue;
+            if (!m.Status.Equals(completed, StringComparison.OrdinalIgnoreCase)) continue;
+
+            var key = $"simkl:{m.Movie.Ids.Simkl}";
+            if (seenKeys.Contains(key)) continue;
+            seenKeys.Add(key);
 
             var watchedAt = TryParseOffset(m.LastWatchedAt) ?? DateTimeOffset.UtcNow;
             if (since.HasValue && watchedAt < since.Value) continue;
 
             result.Add(new ImportedWatchEvent(
-                ExternalId:      $"simkl:{m.Movie.Ids.Simkl}",
+                ExternalId:      key,
                 AdditionalIds:   BuildIds(m.Movie.Ids, "movie"),
                 MediaType:       "movie",
                 Title:           m.Movie.Title,
@@ -208,40 +224,74 @@ public sealed class SimklImportProvider : IImportProvider
                 ProgressPercent: 100.0));
         }
 
-        foreach (var s in all.Shows ?? [])
+        // ── TV shows — per-episode from extended data ──────────────────────────
+        foreach (var s in showsExt)
         {
-            if (!s.Status.Equals(completedStatus, StringComparison.OrdinalIgnoreCase)) continue;
-            if (s.Show.Ids.Simkl.HasValue && seenSimklIds.Contains(s.Show.Ids.Simkl.Value)) continue;
+            if (s.Seasons is null || s.Seasons.Count == 0) continue;
 
-            var watchedAt = TryParseOffset(s.LastWatchedAt) ?? DateTimeOffset.UtcNow;
-            if (since.HasValue && watchedAt < since.Value) continue;
+            var showId       = s.Show.Ids.Simkl;
+            var showWatchedAt = TryParseOffset(s.LastWatchedAt) ?? DateTimeOffset.UtcNow;
 
-            result.Add(new ImportedWatchEvent(
-                ExternalId:      $"simkl:{s.Show.Ids.Simkl}",
-                AdditionalIds:   BuildIds(s.Show.Ids, "tv"),
-                MediaType:       "tv",
-                Title:           s.Show.Title,
-                Year:            s.Show.Year,
-                WatchedAt:       watchedAt,
-                ProgressPercent: 100.0));
+            foreach (var season in s.Seasons)
+            {
+                foreach (var ep in season.Episodes ?? [])
+                {
+                    var key = $"simkl:{showId}:s{season.Number}e{ep.Number}";
+                    if (seenKeys.Contains(key)) continue;
+                    seenKeys.Add(key);
+
+                    var epWatchedAt = TryParseOffset(ep.WatchedAt) ?? showWatchedAt;
+                    if (since.HasValue && epWatchedAt < since.Value) continue;
+
+                    result.Add(new ImportedWatchEvent(
+                        ExternalId:      key,
+                        AdditionalIds:   BuildIds(s.Show.Ids, "tv"),
+                        MediaType:       "tv_episode",
+                        Title:           $"S{season.Number:D2}E{ep.Number:D2}",
+                        Year:            s.Show.Year,
+                        WatchedAt:       epWatchedAt,
+                        ProgressPercent: 100.0,
+                        ShowExternalId:  $"simkl:{showId}",
+                        ShowTitle:       s.Show.Title,
+                        SeasonNumber:    season.Number,
+                        EpisodeNumber:   ep.Number));
+                }
+            }
         }
 
-        foreach (var a in all.Anime ?? [])
+        // ── Anime — per-episode from extended data ────────────────────────────
+        foreach (var a in animeExt)
         {
-            if (!a.Status.Equals(completedStatus, StringComparison.OrdinalIgnoreCase)) continue;
-            if (a.Show.Ids.Simkl.HasValue && seenSimklIds.Contains(a.Show.Ids.Simkl.Value)) continue;
+            if (a.Seasons is null || a.Seasons.Count == 0) continue;
 
-            var watchedAt = TryParseOffset(a.LastWatchedAt) ?? DateTimeOffset.UtcNow;
-            if (since.HasValue && watchedAt < since.Value) continue;
+            var showId        = a.Show.Ids.Simkl;
+            var showWatchedAt = TryParseOffset(a.LastWatchedAt) ?? DateTimeOffset.UtcNow;
 
-            result.Add(new ImportedWatchEvent(
-                ExternalId:      $"simkl:{a.Show.Ids.Simkl}",
-                AdditionalIds:   BuildIds(a.Show.Ids, "anime"),
-                MediaType:       "anime",
-                Title:           a.Show.Title,
-                Year:            a.Show.Year,
-                WatchedAt:       watchedAt,
-                ProgressPercent: 100.0));
+            foreach (var season in a.Seasons)
+            {
+                foreach (var ep in season.Episodes ?? [])
+                {
+                    var key = $"simkl:{showId}:s{season.Number}e{ep.Number}";
+                    if (seenKeys.Contains(key)) continue;
+                    seenKeys.Add(key);
+
+                    var epWatchedAt = TryParseOffset(ep.WatchedAt) ?? showWatchedAt;
+                    if (since.HasValue && epWatchedAt < since.Value) continue;
+
+                    result.Add(new ImportedWatchEvent(
+                        ExternalId:      key,
+                        AdditionalIds:   BuildIds(a.Show.Ids, "anime"),
+                        MediaType:       "anime_episode",
+                        Title:           $"S{season.Number:D2}E{ep.Number:D2}",
+                        Year:            a.Show.Year,
+                        WatchedAt:       epWatchedAt,
+                        ProgressPercent: 100.0,
+                        ShowExternalId:  $"simkl:{showId}",
+                        ShowTitle:       a.Show.Title,
+                        SeasonNumber:    season.Number,
+                        EpisodeNumber:   ep.Number));
+                }
+            }
         }
 
         return result;

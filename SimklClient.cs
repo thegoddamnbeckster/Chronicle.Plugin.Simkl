@@ -82,10 +82,34 @@ internal sealed class SimklClient : IDisposable
     /// </summary>
     internal async Task<AllItemsResponse> GetAllItemsAsync(CancellationToken ct)
     {
-        var response = await GetWithRateLimitAsync("/sync/all-items/movies,shows,anime", ct);
+        var response = await GetWithRateLimitAsync("/sync/all-items", ct);
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<AllItemsResponse>(ct))
                ?? new AllItemsResponse(null, null, null);
+    }
+
+    /// <summary>
+    /// Returns all tracked TV shows with full per-season, per-episode watched data.
+    /// Uses extended=full to include the seasons[] array inside each show entry.
+    /// </summary>
+    internal async Task<List<AllItemsItemExtended>> GetShowsExtendedAsync(CancellationToken ct)
+    {
+        var response = await GetWithRateLimitAsync("/sync/all-items/shows?extended=full", ct);
+        if (!response.IsSuccessStatusCode) return [];
+        var wrapper = await response.Content.ReadFromJsonAsync<AllItemsExtendedWrapper>(ct);
+        return wrapper?.Shows ?? [];
+    }
+
+    /// <summary>
+    /// Returns all tracked anime with full per-season, per-episode watched data.
+    /// Uses extended=full to include the seasons[] array inside each anime entry.
+    /// </summary>
+    internal async Task<List<AllItemsItemExtended>> GetAnimeExtendedAsync(CancellationToken ct)
+    {
+        var response = await GetWithRateLimitAsync("/sync/all-items/anime?extended=full", ct);
+        if (!response.IsSuccessStatusCode) return [];
+        var wrapper = await response.Content.ReadFromJsonAsync<AllItemsExtendedWrapper>(ct);
+        return wrapper?.Anime ?? [];
     }
 
     /// <summary>
