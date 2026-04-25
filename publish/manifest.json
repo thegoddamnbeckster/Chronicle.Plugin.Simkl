@@ -14,18 +14,18 @@
   "background_tasks": [
     {
       "task_id":                  "import-all",
-      "display_name":             "Import All from SIMKL",
-      "description":              "One-time full import of your entire SIMKL watch history, ratings, and watchlist.",
+      "display_name":             "Full Sync",
+      "description":              "Imports your complete SIMKL watch history, ratings, and watchlist from scratch. Safe to re-run — existing records are not duplicated.",
       "default_cron":             "",
       "default_enabled":          false,
       "schedulable":              false,
-      "run_confirmation_title":   "Import everything from SIMKL?",
-      "run_confirmation_message": "This pulls your full SIMKL history and may take several minutes. Existing records will not be duplicated."
+      "run_confirmation_title":   "Run a full SIMKL sync?",
+      "run_confirmation_message": "This pulls your entire SIMKL history and may take several minutes. Existing records will not be duplicated."
     },
     {
       "task_id":         "delta-sync",
       "display_name":    "Delta Sync",
-      "description":     "Pulls new watch events, ratings, and watchlist changes from SIMKL since the last sync.",
+      "description":     "Fetches only new watch events, ratings, and watchlist changes from SIMKL since the last sync. Runs automatically on schedule.",
       "default_cron":    "0 3 * * *",
       "default_enabled": true,
       "schedulable":     true
