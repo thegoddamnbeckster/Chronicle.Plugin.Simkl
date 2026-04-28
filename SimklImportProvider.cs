@@ -440,9 +440,10 @@ public sealed class SimklImportProvider : IImportProvider
             Title:          media.Title,
             Year:           media.Year,
             Overview:       media.Overview,
-            PosterUrl:      media.Poster,
+            PosterUrl:      media.Poster  is not null ? $"https://cf.simkl.in/posters/{media.Poster}_m.webp"  : null,
             RuntimeMinutes: media.Runtime,
-            AdditionalIds:  additionalIds);
+            AdditionalIds:  additionalIds,
+            FanartUrl:      media.Fanart  is not null ? $"https://cf.simkl.in/fanart/{media.Fanart}_medium.webp" : null);
     }
 
     // ── Mapping helpers ───────────────────────────────────────────────────────
