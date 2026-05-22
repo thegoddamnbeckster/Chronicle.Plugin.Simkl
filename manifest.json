@@ -7,8 +7,8 @@
   "min_chronicle_version": "1.0.0",
   "entry_type":            "Chronicle.Plugin.Simkl.SimklMetadataProvider",
   "iconUrl":               "https://simkl.com/favicon.ico",
-  "brandColorLight":       "#000000",
-  "brandColorDark":        "#FFFFFF",
+  "brandColorLight":       "#00b4d8",
+  "brandColorDark":        "#0096b4",
   "fixMatchHint":          "Enter SIMKL ID, IMDB ID (tt...), or SIMKL URL.",
   "supported_media_types": ["movie", "movies", "tv", "anime"],
   "background_tasks": [
