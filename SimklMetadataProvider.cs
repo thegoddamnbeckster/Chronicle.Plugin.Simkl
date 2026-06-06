@@ -123,6 +123,44 @@ public sealed class SimklMetadataProvider : IMetadataProvider
     {
         EnsureConfigured();
 
+        // Normalise the incoming ID to the internal simkl:{type}:{id} format before parsing.
+        // The Fix Match dialog (and the fixMatchHint) let users paste a SIMKL URL directly.
+        // Supported input forms:
+        //   https://simkl.com/movies/2054273/birthrebirth  → simkl:movie:2054273
+        //   https://simkl.com/tv/12345/show-name           → simkl:tv:12345
+        //   https://simkl.com/anime/12345/name             → simkl:anime:12345
+        //   simkl:movie:636830                             → unchanged (internal format)
+        if (externalId.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!Uri.TryCreate(externalId, UriKind.Absolute, out var uri))
+                throw new ArgumentException($"Invalid SIMKL URL: {externalId}");
+
+            // Reject non-SIMKL hosts — don't silently fire API calls against
+            // whatever host the user pasted.
+            if (!uri.Host.Equals("simkl.com", StringComparison.OrdinalIgnoreCase) &&
+                !uri.Host.EndsWith(".simkl.com", StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException(
+                    $"URL is not a simkl.com address: {externalId}");
+
+            // AbsolutePath = "/movies/2054273/birthrebirth" → ["movies","2054273","birthrebirth"]
+            var segments = uri.AbsolutePath.Trim('/').Split('/');
+            if (segments.Length < 2 || !int.TryParse(segments[1], out var urlId))
+                throw new ArgumentException(
+                    $"Could not extract a numeric SIMKL ID from URL: {externalId}. " +
+                    $"Expected format: https://simkl.com/movies/{{id}}/{{slug}}");
+
+            var urlType = segments[0].ToLowerInvariant() switch
+            {
+                "movies" => "movie",
+                "tv"     => "tv",
+                "anime"  => "anime",
+                _ => throw new ArgumentException(
+                    $"Unrecognised SIMKL content type '{segments[0]}' in URL: {externalId}. " +
+                    $"Expected /movies/, /tv/, or /anime/.")
+            };
+            externalId = $"simkl:{urlType}:{urlId}";
+        }
+
         // Format: simkl:{type}:{id}  e.g. "simkl:movie:636830"
         var parts = externalId.Split(':');
         if (parts.Length < 3 || !int.TryParse(parts[2], out var simklId))

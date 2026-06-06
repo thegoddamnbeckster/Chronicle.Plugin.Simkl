@@ -9,9 +9,17 @@
   "iconUrl":               "https://simkl.com/favicon.ico",
   "brandColorLight":       "#00b4d8",
   "brandColorDark":        "#0096b4",
-  "fixMatchHint":          "Enter SIMKL ID, IMDB ID (tt...), or SIMKL URL.",
+  "fixMatchHint":          "Paste a SIMKL URL (e.g. https://simkl.com/movies/2054273/birthrebirth) or a typed ID (e.g. simkl:movie:2054273).",
   "supported_media_types": ["movie", "movies", "tv", "anime"],
   "background_tasks": [
+    {
+      "task_id":         "fetch-missing-metadata",
+      "display_name":    "Fetch Missing Metadata",
+      "description":     "Fetches full metadata (posters, overviews, ratings) from SIMKL for imported items that haven't been enriched yet.",
+      "default_cron":    "0 4 * * *",
+      "default_enabled": true,
+      "schedulable":     true
+    },
     {
       "task_id":                  "import-all",
       "display_name":             "Full Sync",
