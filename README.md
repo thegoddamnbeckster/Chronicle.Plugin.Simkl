@@ -1,5 +1,7 @@
 # Chronicle.Plugin.SIMKL
 
+[![Latest Release](https://img.shields.io/github/v/release/thegoddamnbeckster/Chronicle.Plugin.Simkl?label=Chronicle.Plugin.SIMKL&color=0c9a40)](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Simkl/releases/latest)
+
 SIMKL import and metadata plugin for [Chronicle](https://github.com/thegoddamnbeckster/Chronicle).
 
 Imports your watch history, ratings, and watchlist from [SIMKL](https://simkl.com) via the SIMKL v1 API. Also provides metadata (title, overview, poster, backdrop) for matched items. Supports movies, TV shows, and anime.
