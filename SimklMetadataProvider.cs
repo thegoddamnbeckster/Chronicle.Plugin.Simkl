@@ -116,11 +116,10 @@ public sealed class SimklMetadataProvider : IMetadataProvider
                 return [new ScoredCandidate(directMeta, 100, "known SIMKL ID")];
             }
             catch (KeyNotFoundException) { /* not found — fall through to text search */ }
-            catch (ArgumentException ex)
+            catch (ArgumentException)
             {
                 // Stale ID format (e.g. "simkl:783438" without type segment from an old cross-ref pass).
                 // Fall through to text search; a successful result will overwrite the stale ID.
-                Console.Error.WriteLine($"[SIMKL] Stale known ID '{knownSimklId}' could not be resolved: {ex.Message}");
             }
             // Network/auth errors propagate — don't silently swallow transient failures.
         }
