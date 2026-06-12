@@ -171,18 +171,19 @@ internal sealed class SimklClient : IDisposable
 
     /// <summary>
     /// Looks up a SIMKL item by a foreign ID (TMDB or IMDB).
-    /// <paramref name="idType"/> should be "tmdb" or "imdb"; <paramref name="mediaType"/> "movie" or "show".
+    /// <paramref name="idType"/> should be "tmdb" or "imdb".
+    /// <paramref name="mediaType"/> restricts results to "movie" or "show"; pass null to return any type.
     /// Returns null when no result is found.
     /// </summary>
-    internal async Task<SimklSearchItem?> SearchByForeignIdAsync(
-        string idType, string idValue, string mediaType, CancellationToken ct)
+    internal async Task<SimklIdSearchResult?> SearchByForeignIdAsync(
+        string idType, string idValue, string? mediaType, CancellationToken ct)
     {
-        var url = $"/search/id?{idType}={Uri.EscapeDataString(idValue)}&type={mediaType}";
+        var url = $"/search/id?{idType}={Uri.EscapeDataString(idValue)}";
+        if (mediaType is not null) url += $"&type={mediaType}";
         var response = await GetWithRateLimitAsync(url, ct);
         if (!response.IsSuccessStatusCode) return null;
         var results = await response.Content.ReadFromJsonAsync<List<SimklIdSearchResult>>(ct);
-        return results?.FirstOrDefault()?.Show
-            ?? (SimklSearchItem?)results?.FirstOrDefault()?.Movie;
+        return results?.FirstOrDefault();
     }
 
     internal async Task<bool> PingAsync(CancellationToken ct)

@@ -177,7 +177,8 @@ public sealed class SimklMetadataProvider : IMetadataProvider
             var tmdbType   = externalId[..colonIdx].ToLowerInvariant(); // "tv" or "movie"
             var tmdbId     = externalId[(colonIdx + 1)..];
             var simklType2 = tmdbType == "movie" ? "movie" : "show";
-            var found      = await _client!.SearchByForeignIdAsync("tmdb", tmdbId, simklType2, ct);
+            var hit        = await _client!.SearchByForeignIdAsync("tmdb", tmdbId, simklType2, ct);
+            var found      = hit?.Show ?? hit?.Movie;
             if (found?.Ids.Simkl is not int resolvedId)
                 throw new KeyNotFoundException(
                     $"SIMKL could not resolve TMDB {externalId} to a SIMKL ID.");
@@ -186,17 +187,15 @@ public sealed class SimklMetadataProvider : IMetadataProvider
         }
         else if (externalId.StartsWith("imdb:", StringComparison.OrdinalIgnoreCase))
         {
-            var imdbId     = externalId[5..]; // strip "imdb:" prefix
-            var foundShow  = await _client!.SearchByForeignIdAsync("imdb", imdbId, "show", ct);
-            var foundMovie = foundShow is null
-                ? await _client!.SearchByForeignIdAsync("imdb", imdbId, "movie", ct)
-                : null;
-            var found = foundShow ?? foundMovie;
+            var imdbId = externalId[5..]; // strip "imdb:" prefix
+            // No type filter — let the API response tell us movie vs show via which field is populated.
+            var hit = await _client!.SearchByForeignIdAsync("imdb", imdbId, null, ct);
+            var isMovie       = hit?.Movie is not null;
+            var found         = hit?.Show ?? hit?.Movie;
             if (found?.Ids.Simkl is not int resolvedImdbId)
                 throw new KeyNotFoundException(
                     $"SIMKL could not resolve {externalId} to a SIMKL ID.");
-            var resolvedImdbType = foundShow is not null ? "tv" : "movie";
-            externalId = $"simkl:{resolvedImdbType}:{resolvedImdbId}";
+            externalId = $"simkl:{(isMovie ? "movie" : "tv")}:{resolvedImdbId}";
         }
 
         // Format: simkl:{type}:{id}  e.g. "simkl:movie:636830"
