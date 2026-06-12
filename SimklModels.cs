@@ -169,3 +169,9 @@ internal record SimklRatingDetail(
     [property: JsonPropertyName("rating")] double? Rating,
     [property: JsonPropertyName("votes")]  int?    Votes
 );
+
+/// <summary>Result item from GET /search/id — wraps either a show or movie field.</summary>
+internal record SimklIdSearchResult(
+    [property: JsonPropertyName("show")]  SimklSearchItem? Show,
+    [property: JsonPropertyName("movie")] SimklSearchItem? Movie
+);

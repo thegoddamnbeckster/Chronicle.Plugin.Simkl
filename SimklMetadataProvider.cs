@@ -57,6 +57,11 @@ public sealed class SimklMetadataProvider : IMetadataProvider
         _client = new SimklClient(clientId);
     }
 
+    // ── Cross-reference capabilities ─────────────────────────────────────────
+
+    public IReadOnlyList<string> GetAcceptedCrossRefPrefixes() =>
+        ["tv:", "movie:", "imdb:"];
+
     // ── MediaTypeSupport ──────────────────────────────────────────────────────
 
     public MediaTypeSupport[] GetSupportedMediaTypes() =>
@@ -159,6 +164,39 @@ public sealed class SimklMetadataProvider : IMetadataProvider
                     $"Expected /movies/, /tv/, or /anime/.")
             };
             externalId = $"simkl:{urlType}:{urlId}";
+        }
+
+        // Handle cross-reference IDs from other plugins:
+        //   tv:{tmdbId}     → look up by TMDB ID as a show
+        //   movie:{tmdbId}  → look up by TMDB ID as a movie
+        //   imdb:{imdbId}   → look up by IMDB ID
+        if (externalId.StartsWith("tv:", StringComparison.OrdinalIgnoreCase) ||
+            externalId.StartsWith("movie:", StringComparison.OrdinalIgnoreCase))
+        {
+            var colonIdx   = externalId.IndexOf(':');
+            var tmdbType   = externalId[..colonIdx].ToLowerInvariant(); // "tv" or "movie"
+            var tmdbId     = externalId[(colonIdx + 1)..];
+            var simklType2 = tmdbType == "movie" ? "movie" : "show";
+            var found      = await _client!.SearchByForeignIdAsync("tmdb", tmdbId, simklType2, ct);
+            if (found?.Ids.Simkl is not int resolvedId)
+                throw new KeyNotFoundException(
+                    $"SIMKL could not resolve TMDB {externalId} to a SIMKL ID.");
+            var resolvedType = tmdbType == "movie" ? "movie" : "tv";
+            externalId = $"simkl:{resolvedType}:{resolvedId}";
+        }
+        else if (externalId.StartsWith("imdb:", StringComparison.OrdinalIgnoreCase))
+        {
+            var imdbId     = externalId[5..]; // strip "imdb:" prefix
+            var foundShow  = await _client!.SearchByForeignIdAsync("imdb", imdbId, "show", ct);
+            var foundMovie = foundShow is null
+                ? await _client!.SearchByForeignIdAsync("imdb", imdbId, "movie", ct)
+                : null;
+            var found = foundShow ?? foundMovie;
+            if (found?.Ids.Simkl is not int resolvedImdbId)
+                throw new KeyNotFoundException(
+                    $"SIMKL could not resolve {externalId} to a SIMKL ID.");
+            var resolvedImdbType = foundShow is not null ? "tv" : "movie";
+            externalId = $"simkl:{resolvedImdbType}:{resolvedImdbId}";
         }
 
         // Format: simkl:{type}:{id}  e.g. "simkl:movie:636830"
