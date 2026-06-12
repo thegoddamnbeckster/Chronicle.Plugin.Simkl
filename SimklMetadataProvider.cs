@@ -104,6 +104,20 @@ public sealed class SimklMetadataProvider : IMetadataProvider
         EnsureConfigured();
 
         var simklType = SimklTypeFor(context.MediaTypeName);
+
+        // If we already know the SIMKL ID from a previous sync or cross-ref, use it
+        // directly instead of running an unreliable text search.
+        if (context.KnownExternalIds?.TryGetValue("simkl", out var knownSimklId) == true
+            && !string.IsNullOrEmpty(knownSimklId))
+        {
+            try
+            {
+                var directMeta = await GetByIdAsync(knownSimklId, ct);
+                return [new ScoredCandidate(directMeta, 100, "known SIMKL ID")];
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException) { /* fall through to text search */ }
+        }
+
         var results   = await _client!.SearchMediaAsync(simklType, context.Name, ct);
 
         var candidates = new List<ScoredCandidate>();
