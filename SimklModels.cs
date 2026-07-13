@@ -18,7 +18,10 @@ internal record PinCodeResponse(
 /// result = "OK" means approved; "KO" or anything else means still pending.
 /// </summary>
 internal record PinPollResponse(
-    [property: JsonPropertyName("result")]       string  Result,
+    // Nullable: while pending, Simkl's response doesn't reliably include every field on
+    // every call — treat a missing "result" as still-pending rather than a hard parse
+    // failure (see PollPinAsync).
+    [property: JsonPropertyName("result")]       string? Result,
     [property: JsonPropertyName("access_token")] string? AccessToken,
     [property: JsonPropertyName("message")]      string? Message
 );

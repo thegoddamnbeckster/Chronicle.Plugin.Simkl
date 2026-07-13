@@ -68,7 +68,21 @@ internal sealed class SimklClient : IDisposable
         if (!response.IsSuccessStatusCode)
             return null;
 
-        var poll = await response.Content.ReadFromJsonAsync<PinPollResponse>(ct);
+        // The pending-state response body isn't guaranteed to match PinPollResponse's shape
+        // on every call (e.g. a field missing before the user has approved yet). A parse
+        // failure here means "not approved yet", not "the whole auth flow failed" — treat
+        // it the same as an explicit result != "OK" instead of letting the caller's generic
+        // exception handler surface it as a hard "Polling failed" error.
+        PinPollResponse? poll;
+        try
+        {
+            poll = await response.Content.ReadFromJsonAsync<PinPollResponse>(ct);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
         return poll?.Result?.Equals("OK", StringComparison.OrdinalIgnoreCase) == true
             ? poll
             : null;

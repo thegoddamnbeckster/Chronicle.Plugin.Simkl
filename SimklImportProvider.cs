@@ -26,7 +26,7 @@ public sealed class SimklImportProvider : IImportProvider
 
     public string PluginId    => "chronicle.plugin.simkl";
     public string Name        => "Simkl";
-    public string Version     => "1.1.0";
+    public string Version     => "1.1.1";
     public string Author      => "Michael Beck";
     public string Description => "Import watch history, ratings and watchlist from Simkl";
 
