@@ -1,7 +1,7 @@
 {
   "plugin_id":             "chronicle.plugin.simkl",
   "name":                  "SIMKL",
-  "version":               "1.1.0",
+  "version":               "1.1.1",
   "author":                "Chronicle Contributors",
   "description":           "Metadata for Movies, TV, and Anime from SIMKL. Requires a free SIMKL API Client ID.",
   "min_chronicle_version": "1.0.0",

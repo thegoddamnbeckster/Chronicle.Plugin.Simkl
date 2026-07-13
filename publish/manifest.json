@@ -1,14 +1,14 @@
 {
   "plugin_id":             "chronicle.plugin.simkl",
   "name":                  "SIMKL",
-  "version":               "1.1.0",
+  "version":               "1.1.1",
   "author":                "Chronicle Contributors",
   "description":           "Metadata for Movies, TV, and Anime from SIMKL. Requires a free SIMKL API Client ID.",
   "min_chronicle_version": "1.0.0",
   "entry_type":            "Chronicle.Plugin.Simkl.SimklMetadataProvider",
   "iconUrl":               "https://simkl.com/favicon.ico",
-  "brandColorLight":       "#000000",
-  "brandColorDark":        "#FFFFFF",
+  "brandColorLight":       "#00b4d8",
+  "brandColorDark":        "#0096b4",
   "fixMatchHint":          "Paste a SIMKL URL (e.g. https://simkl.com/movies/2054273/birthrebirth) or a typed ID (e.g. simkl:movie:2054273).",
   "supported_media_types": ["movie", "movies", "tv", "anime"],
   "background_tasks": [
