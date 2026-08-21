@@ -21,8 +21,16 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Http" Version="9.0.*" />
     <PackageReference Include="System.Text.Json"          Version="9.0.*" />
-    <!-- Serilog is loaded by the Chronicle host — reference without bundling -->
-    <PackageReference Include="Serilog" Version="4.*" PrivateAssets="all" ExcludeAssets="runtime" />
+    <!--
+      Serilog is loaded by the Chronicle host, not bundled here (ExcludeAssets=runtime).
+      Pinned to the EXACT version Chronicle.API itself references (via Serilog.AspNetCore
+      10.0.0) rather than a floating range. Confirmed directly (2026-08-21) that "4.*"
+      resolves to whatever the latest published patch happens to be at build time (4.4.0),
+      which throws FileNotFoundException at runtime the moment it doesn't byte for byte
+      match the 4.3.0 the host actually has loaded. Bump this only when Chronicle.API's
+      own Serilog version changes.
+    -->
+    <PackageReference Include="Serilog" Version="4.3.0" PrivateAssets="all" ExcludeAssets="runtime" />
   </ItemGroup>
 
   <ItemGroup>
