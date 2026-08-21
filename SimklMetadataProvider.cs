@@ -94,6 +94,15 @@ public sealed class SimklMetadataProvider : IMetadataProvider
             SupportedFields = ["title", "overview", "year", "poster_url", "backdrop_url",
                                "runtime_minutes", "genres", "rating"],
         },
+        // Standalone anime films — flat like "movies", not hierarchical like "anime" (real anime
+        // TV series). See Chronicle.Plugin.TMDB's anime_movies declaration for the full rationale.
+        new MediaTypeSupport
+        {
+            MediaTypeName   = "anime_movies",
+            DefaultPriority = 10,
+            SupportedFields = ["title", "overview", "year", "poster_url", "backdrop_url",
+                               "runtime_minutes", "genres", "rating"],
+        },
     ];
 
     // ── Search ────────────────────────────────────────────────────────────────

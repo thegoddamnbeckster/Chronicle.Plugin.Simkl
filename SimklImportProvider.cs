@@ -211,7 +211,8 @@ public sealed class SimklImportProvider : IImportProvider
             if (seenKeys.Contains(key)) continue;
             seenKeys.Add(key);
 
-            var watchedAt = TryParseOffset(m.LastWatchedAt) ?? DateTimeOffset.UtcNow;
+            var realWatchedAt = TryParseOffset(m.LastWatchedAt);
+            var watchedAt = realWatchedAt ?? DateTimeOffset.UtcNow;
             if (since.HasValue && watchedAt < since.Value) continue;
 
             result.Add(new ImportedWatchEvent(
@@ -221,7 +222,8 @@ public sealed class SimklImportProvider : IImportProvider
                 Title:           m.Movie.Title,
                 Year:            m.Movie.Year,
                 WatchedAt:       watchedAt,
-                ProgressPercent: 100.0));
+                ProgressPercent: 100.0,
+                WatchedAtIsApproximate: realWatchedAt is null));
         }
 
         // ── TV shows — per-episode from extended data ──────────────────────────
@@ -230,7 +232,8 @@ public sealed class SimklImportProvider : IImportProvider
             if (s.Seasons is null || s.Seasons.Count == 0) continue;
 
             var showId       = s.Show.Ids.Simkl;
-            var showWatchedAt = TryParseOffset(s.LastWatchedAt) ?? DateTimeOffset.UtcNow;
+            var realShowWatchedAt = TryParseOffset(s.LastWatchedAt);
+            var showWatchedAt = realShowWatchedAt ?? DateTimeOffset.UtcNow;
 
             foreach (var season in s.Seasons)
             {
@@ -240,7 +243,8 @@ public sealed class SimklImportProvider : IImportProvider
                     if (seenKeys.Contains(key)) continue;
                     seenKeys.Add(key);
 
-                    var epWatchedAt = TryParseOffset(ep.WatchedAt) ?? showWatchedAt;
+                    var realEpWatchedAt = TryParseOffset(ep.WatchedAt);
+                    var epWatchedAt = realEpWatchedAt ?? showWatchedAt;
                     if (since.HasValue && epWatchedAt < since.Value) continue;
 
                     result.Add(new ImportedWatchEvent(
@@ -251,6 +255,7 @@ public sealed class SimklImportProvider : IImportProvider
                         Year:            s.Show.Year,
                         WatchedAt:       epWatchedAt,
                         ProgressPercent: 100.0,
+                        WatchedAtIsApproximate: realEpWatchedAt is null && realShowWatchedAt is null,
                         ShowExternalId:  $"simkl:{showId}",
                         ShowTitle:       s.Show.Title,
                         SeasonNumber:    season.Number,
@@ -265,7 +270,8 @@ public sealed class SimklImportProvider : IImportProvider
             if (a.Seasons is null || a.Seasons.Count == 0) continue;
 
             var showId        = a.Show.Ids.Simkl;
-            var showWatchedAt = TryParseOffset(a.LastWatchedAt) ?? DateTimeOffset.UtcNow;
+            var realShowWatchedAt = TryParseOffset(a.LastWatchedAt);
+            var showWatchedAt = realShowWatchedAt ?? DateTimeOffset.UtcNow;
 
             foreach (var season in a.Seasons)
             {
@@ -275,7 +281,8 @@ public sealed class SimklImportProvider : IImportProvider
                     if (seenKeys.Contains(key)) continue;
                     seenKeys.Add(key);
 
-                    var epWatchedAt = TryParseOffset(ep.WatchedAt) ?? showWatchedAt;
+                    var realEpWatchedAt = TryParseOffset(ep.WatchedAt);
+                    var epWatchedAt = realEpWatchedAt ?? showWatchedAt;
                     if (since.HasValue && epWatchedAt < since.Value) continue;
 
                     result.Add(new ImportedWatchEvent(
@@ -286,6 +293,7 @@ public sealed class SimklImportProvider : IImportProvider
                         Year:            a.Show.Year,
                         WatchedAt:       epWatchedAt,
                         ProgressPercent: 100.0,
+                        WatchedAtIsApproximate: realEpWatchedAt is null && realShowWatchedAt is null,
                         ShowExternalId:  $"simkl:{showId}",
                         ShowTitle:       a.Show.Title,
                         SeasonNumber:    season.Number,
@@ -440,10 +448,10 @@ public sealed class SimklImportProvider : IImportProvider
             Title:          media.Title,
             Year:           media.Year,
             Overview:       media.Overview,
-            PosterUrl:      media.Poster  is not null ? $"https://cf.simkl.in/posters/{media.Poster}_m.webp"  : null,
+            PosterUrl:      media.Poster  is not null ? $"https://simkl.in/posters/{media.Poster}_m.webp"  : null,
             RuntimeMinutes: media.Runtime,
             AdditionalIds:  additionalIds,
-            FanartUrl:      media.Fanart  is not null ? $"https://cf.simkl.in/fanart/{media.Fanart}_medium.webp" : null);
+            FanartUrl:      media.Fanart  is not null ? $"https://simkl.in/fanart/{media.Fanart}_medium.webp" : null);
     }
 
     // ── Mapping helpers ───────────────────────────────────────────────────────
