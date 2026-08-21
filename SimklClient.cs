@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Serilog;
 
 namespace Chronicle.Plugin.Simkl;
 
@@ -262,6 +263,8 @@ internal sealed class SimklClient : IDisposable
 
     // ── Rate-limit handling ────────────────────────────────────────────────────
 
+    private static readonly ILogger _log = Log.ForContext<SimklClient>();
+
     /// <summary>
     /// Retry-After beyond this is treated as "not worth waiting out" -- Chronicle's own
     /// ProviderCallGuard cancels the whole call (search included) at a hard 25s ceiling
@@ -278,9 +281,31 @@ internal sealed class SimklClient : IDisposable
     /// </summary>
     private static readonly TimeSpan MaxWorthwhileRetryDelay = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// How long to stop calling SIMKL entirely once the daily quota is confirmed exhausted.
+    /// SIMKL doesn't document exactly when a daily quota resets, so this is a deliberately
+    /// conservative "long enough that retrying every few seconds for the rest of the day is
+    /// pointless" pause, not a fact about SIMKL's own reset schedule. Static/process-lifetime,
+    /// shared by every SimklClient instance (metadata provider and import provider both draw
+    /// on the same per-app quota, so either one hitting the limit should stop both).
+    /// </summary>
+    private static readonly TimeSpan QuotaCooldown = TimeSpan.FromHours(12);
+
+    private static readonly object _quotaLock = new();
+    private static DateTimeOffset? _rateLimitedUntil;
+    private static int _successfulRequestsSinceLastLimit;
+
     private async Task<HttpResponseMessage> GetWithRateLimitAsync(
         string url, CancellationToken ct)
     {
+        lock (_quotaLock)
+        {
+            if (_rateLimitedUntil is { } until && DateTimeOffset.UtcNow < until)
+                throw new HttpRequestException(
+                    $"SIMKL request quota was exhausted after {_successfulRequestsSinceLastLimit} " +
+                    $"successful calls; not retrying until {until:u}.");
+        }
+
         var response = await _http.GetAsync(url, ct);
 
         if (response.StatusCode == HttpStatusCode.TooManyRequests)
@@ -290,13 +315,52 @@ internal sealed class SimklClient : IDisposable
                 retryAfter = response.Headers.RetryAfter.Delta!.Value + TimeSpan.FromSeconds(1);
 
             if (retryAfter > MaxWorthwhileRetryDelay)
+            {
+                EnterQuotaCooldown();
                 return response;
+            }
 
             await Task.Delay(retryAfter, ct);
             response = await _http.GetAsync(url, ct);
+            if (response.StatusCode == HttpStatusCode.TooManyRequests)
+                EnterQuotaCooldown();
+        }
+
+        if (response.IsSuccessStatusCode)
+        {
+            lock (_quotaLock) { _successfulRequestsSinceLastLimit++; }
+
+            // SIMKL is documented to expose these on at least some responses; when present,
+            // they're a more precise signal than our own count, so log them alongside it
+            // rather than choosing one source over the other.
+            if (response.Headers.TryGetValues("X-RateLimit-Remaining", out var remaining)
+                && response.Headers.TryGetValues("X-RateLimit-Limit", out var limit))
+            {
+                _log.Debug("SIMKL rate-limit headers: {Remaining}/{Limit} remaining",
+                    remaining.FirstOrDefault(), limit.FirstOrDefault());
+            }
         }
 
         return response;
+    }
+
+    private static void EnterQuotaCooldown()
+    {
+        lock (_quotaLock)
+        {
+            // Already in cooldown from a previous call on another thread -- don't push the
+            // deadline back out or re-log for every concurrent request that lands here.
+            if (_rateLimitedUntil is { } existing && DateTimeOffset.UtcNow < existing)
+                return;
+
+            var until = DateTimeOffset.UtcNow + QuotaCooldown;
+            _log.Warning(
+                "SIMKL request quota exhausted after {Count} successful calls this window -- " +
+                "pausing all SIMKL requests until {Until:u}",
+                _successfulRequestsSinceLastLimit, until);
+            _rateLimitedUntil = until;
+            _successfulRequestsSinceLastLimit = 0;
+        }
     }
 
     public void Dispose() => _http.Dispose();
