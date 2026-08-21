@@ -27,7 +27,31 @@ internal sealed class SimklClient : IDisposable
 
     internal SimklClient(string clientId, string? accessToken = null)
     {
-        _http = new HttpClient { BaseAddress = new Uri(ApiBase) };
+        // This client lives for the plugin's entire lifetime (constructed once in
+        // Configure(), never recreated) -- confirmed directly (2026-08-21) that every
+        // search request eventually hung until Chronicle's own 25s provider-call guard
+        // cancelled it, even though a fresh, unrelated request from this same machine to
+        // the same host resolved in under half a second. The default HttpClient/
+        // SocketsHttpHandler pools connections indefinitely (PooledConnectionLifetime is
+        // Timeout.InfiniteTimeSpan by default) -- exactly the scenario .NET's own docs warn
+        // about for a long-lived static/singleton client: a pooled connection that goes
+        // stale (silently dropped by the server or a NAT/firewall in between) is reused on
+        // the next request and hangs rather than failing fast, since nothing ever forces a
+        // reconnect. PooledConnectionLifetime bounds how long any one connection is kept,
+        // so a stale one gets torn down and replaced automatically instead of poisoning
+        // every request behind it for the rest of the process's life.
+        var handler = new SocketsHttpHandler
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+        };
+        _http = new HttpClient(handler)
+        {
+            BaseAddress = new Uri(ApiBase),
+            // Shorter than Chronicle's own 25s ProviderCallGuard timeout so a genuine hang
+            // surfaces as this client's own clear "the request itself timed out" failure
+            // instead of always bottoming out in the guard's generic message.
+            Timeout = TimeSpan.FromSeconds(20),
+        };
         _http.DefaultRequestHeaders.Add("simkl-api-key", clientId);
         _http.DefaultRequestHeaders.Accept.Add(
             new MediaTypeWithQualityHeaderValue("application/json"));
@@ -109,7 +133,8 @@ internal sealed class SimklClient : IDisposable
     internal async Task<List<AllItemsItemExtended>> GetShowsExtendedAsync(CancellationToken ct)
     {
         var response = await GetWithRateLimitAsync("/sync/all-items/shows?extended=full", ct);
-        if (!response.IsSuccessStatusCode) return [];
+        if (!response.IsSuccessStatusCode)
+            await ThrowForFailureAsync(response, "sync/all-items/shows", ct);
         var wrapper = await response.Content.ReadFromJsonAsync<AllItemsExtendedWrapper>(ct);
         return wrapper?.Shows ?? [];
     }
@@ -121,7 +146,8 @@ internal sealed class SimklClient : IDisposable
     internal async Task<List<AllItemsItemExtended>> GetAnimeExtendedAsync(CancellationToken ct)
     {
         var response = await GetWithRateLimitAsync("/sync/all-items/anime?extended=full", ct);
-        if (!response.IsSuccessStatusCode) return [];
+        if (!response.IsSuccessStatusCode)
+            await ThrowForFailureAsync(response, "sync/all-items/anime", ct);
         var wrapper = await response.Content.ReadFromJsonAsync<AllItemsExtendedWrapper>(ct);
         return wrapper?.Anime ?? [];
     }
@@ -161,26 +187,29 @@ internal sealed class SimklClient : IDisposable
     {
         var encoded = Uri.EscapeDataString(query);
         var response = await GetWithRateLimitAsync($"/search/{type}?q={encoded}", ct);
-        if (!response.IsSuccessStatusCode) return [];
+        if (!response.IsSuccessStatusCode)
+            await ThrowForFailureAsync(response, $"search/{type}?q={query}", ct);
         return await response.Content.ReadFromJsonAsync<List<SimklSearchItem>>(ct) ?? [];
     }
 
-    /// <summary>Returns full metadata for a movie by its SIMKL ID.</summary>
+    /// <summary>Returns full metadata for a movie by its SIMKL ID, or null if that ID genuinely doesn't exist.</summary>
     internal async Task<SimklFullMedia?> GetMovieAsync(int simklId, CancellationToken ct)
     {
         var response = await GetWithRateLimitAsync($"/movies/{simklId}?extended=full", ct);
-        return response.IsSuccessStatusCode
-            ? await response.Content.ReadFromJsonAsync<SimklFullMedia>(ct)
-            : null;
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        if (!response.IsSuccessStatusCode)
+            await ThrowForFailureAsync(response, $"movies/{simklId}", ct);
+        return await response.Content.ReadFromJsonAsync<SimklFullMedia>(ct);
     }
 
-    /// <summary>Returns full metadata for a TV show or anime by its SIMKL ID.</summary>
+    /// <summary>Returns full metadata for a TV show or anime by its SIMKL ID, or null if that ID genuinely doesn't exist.</summary>
     internal async Task<SimklFullMedia?> GetShowAsync(int simklId, CancellationToken ct)
     {
         var response = await GetWithRateLimitAsync($"/tv/{simklId}?extended=full", ct);
-        return response.IsSuccessStatusCode
-            ? await response.Content.ReadFromJsonAsync<SimklFullMedia>(ct)
-            : null;
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        if (!response.IsSuccessStatusCode)
+            await ThrowForFailureAsync(response, $"tv/{simklId}", ct);
+        return await response.Content.ReadFromJsonAsync<SimklFullMedia>(ct);
     }
 
     /// <summary>
@@ -195,9 +224,27 @@ internal sealed class SimklClient : IDisposable
         var url = $"/search/id?{idType}={Uri.EscapeDataString(idValue)}";
         if (mediaType is not null) url += $"&type={mediaType}";
         var response = await GetWithRateLimitAsync(url, ct);
-        if (!response.IsSuccessStatusCode) return null;
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        if (!response.IsSuccessStatusCode)
+            await ThrowForFailureAsync(response, url, ct);
         var results = await response.Content.ReadFromJsonAsync<List<SimklIdSearchResult>>(ct);
         return results?.FirstOrDefault();
+    }
+
+    /// <summary>
+    /// A non-2xx response from SIMKL's search/lookup endpoints previously came back as a
+    /// bare empty/null result, indistinguishable from "SIMKL genuinely has no match" --
+    /// which meant an expired token (401), an exhausted daily rate limit (429), or an
+    /// outage (5xx) silently looked identical to zero real results, for every single
+    /// query, with no trace in Chronicle's own logs. This surfaces the real cause instead;
+    /// callers already run through ProviderCallGuard, which logs the exception's message.
+    /// </summary>
+    private static async Task ThrowForFailureAsync(HttpResponseMessage response, string context, CancellationToken ct)
+    {
+        var body = await response.Content.ReadAsStringAsync(ct);
+        var snippet = body.Length > 300 ? body[..300] : body;
+        throw new HttpRequestException(
+            $"SIMKL {context} failed: {(int)response.StatusCode} {response.ReasonPhrase} — {snippet}");
     }
 
     internal async Task<bool> PingAsync(CancellationToken ct)
@@ -215,6 +262,22 @@ internal sealed class SimklClient : IDisposable
 
     // ── Rate-limit handling ────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Retry-After beyond this is treated as "not worth waiting out" -- Chronicle's own
+    /// ProviderCallGuard cancels the whole call (search included) at a hard 25s ceiling
+    /// regardless of what this client does. Confirmed directly (2026-08-21): SIMKL's daily
+    /// free-tier quota was exhausted, every request got an immediate 429, and the old
+    /// unconditional wait-then-retry (defaulting to 60s, or whatever Retry-After said) never
+    /// once got the chance to finish before the guard's 25s cutoff fired first -- so the
+    /// resulting HttpRequestException from the retried request was NEVER SEEN. Every single
+    /// search silently reported "no result" for hours, indistinguishable from SIMKL
+    /// genuinely having nothing, with no trace of the real 429 anywhere in Chronicle's logs.
+    /// A short burst-limit backoff is still worth honoring; a long one (exhausted daily
+    /// quota, effectively "come back tomorrow") is not -- return the 429 immediately instead
+    /// so the caller's own failure handling actually gets to run.
+    /// </summary>
+    private static readonly TimeSpan MaxWorthwhileRetryDelay = TimeSpan.FromSeconds(5);
+
     private async Task<HttpResponseMessage> GetWithRateLimitAsync(
         string url, CancellationToken ct)
     {
@@ -222,11 +285,14 @@ internal sealed class SimklClient : IDisposable
 
         if (response.StatusCode == HttpStatusCode.TooManyRequests)
         {
-            var retryAfterSec = 60;
+            var retryAfter = TimeSpan.FromSeconds(60);
             if (response.Headers.RetryAfter?.Delta.HasValue == true)
-                retryAfterSec = (int)response.Headers.RetryAfter.Delta!.Value.TotalSeconds + 1;
+                retryAfter = response.Headers.RetryAfter.Delta!.Value + TimeSpan.FromSeconds(1);
 
-            await Task.Delay(retryAfterSec * 1000, ct);
+            if (retryAfter > MaxWorthwhileRetryDelay)
+                return response;
+
+            await Task.Delay(retryAfter, ct);
             response = await _http.GetAsync(url, ct);
         }
 
