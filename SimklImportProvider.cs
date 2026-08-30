@@ -17,6 +17,11 @@ namespace Chronicle.Plugin.Simkl;
 ///   - Ratings        (extracted from /sync/all-items)
 ///   - Watchlist      (extracted from /sync/all-items — items with status "plantowatch")
 ///
+/// NOT implemented: GetPlaybackProgressAsync (uses the interface's empty-list default).
+/// Simkl's sync API has no fractional-progress concept at all -- only a whole-item "watching"/
+/// "completed" status and a per-episode watched/not-watched boolean, never "42% through this
+/// movie". Trakt's own GET /sync/playback/{movies,episodes} has no Simkl equivalent to call.
+///
 /// Required settings: client_id
 /// Persisted post-auth: access_token
 /// </summary>
@@ -255,7 +260,11 @@ public sealed class SimklImportProvider : IImportProvider
                         Year:            s.Show.Year,
                         WatchedAt:       epWatchedAt,
                         ProgressPercent: 100.0,
-                        WatchedAtIsApproximate: realEpWatchedAt is null && realShowWatchedAt is null,
+                        // Borrowing the SHOW's own last-watched date for an episode SIMKL never
+                        // gave its own timestamp is still an approximation for that episode --
+                        // real per-episode data always wins, but "the whole show shares one date"
+                        // must not be reported as if it were that episode's genuine watch time.
+                        WatchedAtIsApproximate: realEpWatchedAt is null,
                         ShowExternalId:  $"simkl:{showId}",
                         ShowTitle:       s.Show.Title,
                         SeasonNumber:    season.Number,
@@ -293,7 +302,11 @@ public sealed class SimklImportProvider : IImportProvider
                         Year:            a.Show.Year,
                         WatchedAt:       epWatchedAt,
                         ProgressPercent: 100.0,
-                        WatchedAtIsApproximate: realEpWatchedAt is null && realShowWatchedAt is null,
+                        // Borrowing the SHOW's own last-watched date for an episode SIMKL never
+                        // gave its own timestamp is still an approximation for that episode --
+                        // real per-episode data always wins, but "the whole show shares one date"
+                        // must not be reported as if it were that episode's genuine watch time.
+                        WatchedAtIsApproximate: realEpWatchedAt is null,
                         ShowExternalId:  $"simkl:{showId}",
                         ShowTitle:       a.Show.Title,
                         SeasonNumber:    season.Number,
@@ -314,6 +327,17 @@ public sealed class SimklImportProvider : IImportProvider
         var all    = await client.GetAllItemsAsync(ct);
         var result = new List<ImportedRating>();
 
+        // Simkl's /sync/all-items doesn't expose a rated_at field at all -- last_watched_at is
+        // the closest real signal we have (when they rated it and when they last watched it
+        // are usually close together in practice). Confirmed real bug (2026-08-30, per-user
+        // request "the most recent status wins"): stamping every Simkl rating with UtcNow (the
+        // sync's own run time, not anything about the rating itself) made Simkl's rating look
+        // like the newest possible value on every single sync, so it would always win the
+        // "most recent wins" comparison in SyncOrchestrationService.UpsertRatingAsync regardless
+        // of how long ago it was actually submitted there -- silently overwriting a genuinely
+        // more recent Chronicle web UI or Kodi-pushed rating every time this sync ran. Falls
+        // back to MinValue (unconditionally old) rather than UtcNow when even last_watched_at is
+        // missing, so an unknown timestamp can never win against a real one either.
         foreach (var m in all.Movies ?? [])
         {
             if (m.UserRating.HasValue && m.UserRating > 0)
@@ -324,7 +348,7 @@ public sealed class SimklImportProvider : IImportProvider
                     Title:         m.Movie.Title,
                     Year:          m.Movie.Year,
                     Rating:        m.UserRating.Value,
-                    RatedAt:       DateTimeOffset.UtcNow));  // Simkl doesn't expose rated_at in all-items
+                    RatedAt:       TryParseOffset(m.LastWatchedAt) ?? DateTimeOffset.MinValue));
         }
 
         foreach (var s in all.Shows ?? [])
@@ -337,7 +361,7 @@ public sealed class SimklImportProvider : IImportProvider
                     Title:         s.Show.Title,
                     Year:          s.Show.Year,
                     Rating:        s.UserRating.Value,
-                    RatedAt:       DateTimeOffset.UtcNow));
+                    RatedAt:       TryParseOffset(s.LastWatchedAt) ?? DateTimeOffset.MinValue));
         }
 
         foreach (var a in all.Anime ?? [])
@@ -350,7 +374,7 @@ public sealed class SimklImportProvider : IImportProvider
                     Title:         a.Show.Title,
                     Year:          a.Show.Year,
                     Rating:        a.UserRating.Value,
-                    RatedAt:       DateTimeOffset.UtcNow));
+                    RatedAt:       TryParseOffset(a.LastWatchedAt) ?? DateTimeOffset.MinValue));
         }
 
         return result;
