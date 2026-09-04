@@ -244,8 +244,13 @@ internal sealed class SimklClient : IDisposable
     {
         var body = await response.Content.ReadAsStringAsync(ct);
         var snippet = body.Length > 300 ? body[..300] : body;
+        // StatusCode carried on the exception (not just embedded in the message) so callers can
+        // tell a 429 or a 404 apart from a generic failure without parsing text -- previously
+        // every non-2xx here (401 expired token, 429 exhausted quota, 5xx outage) looked
+        // identical to callers that only checked the message string.
         throw new HttpRequestException(
-            $"SIMKL {context} failed: {(int)response.StatusCode} {response.ReasonPhrase} — {snippet}");
+            $"SIMKL {context} failed: {(int)response.StatusCode} {response.ReasonPhrase} — {snippet}",
+            null, response.StatusCode);
     }
 
     internal async Task<bool> PingAsync(CancellationToken ct)
@@ -295,15 +300,31 @@ internal sealed class SimklClient : IDisposable
     private static DateTimeOffset? _rateLimitedUntil;
     private static int _successfulRequestsSinceLastLimit;
 
+    /// <summary>
+    /// Highest successful-call count observed across every cutoff this process has hit —
+    /// SIMKL doesn't document the exact enforced daily number (only "~1,000/day for free
+    /// accounts" as a rough figure), so this exists purely to let that real ceiling be read
+    /// off the logs empirically over time instead of guessed at. Process-lifetime only: it
+    /// resets to 0 on a plugin/API restart, same as every other field here — there's nowhere
+    /// in this plugin's stateless-between-Configure-calls model to persist it further without
+    /// a DB-backed setting, which is a larger change than "adjust the logging."
+    /// </summary>
+    private static int _maxSuccessfulRequestsObserved;
+
     private async Task<HttpResponseMessage> GetWithRateLimitAsync(
         string url, CancellationToken ct)
     {
         lock (_quotaLock)
         {
             if (_rateLimitedUntil is { } until && DateTimeOffset.UtcNow < until)
+                // StatusCode set to TooManyRequests (not just embedded in the message) so callers
+                // can distinguish "rate limited, not this item's fault" from a real failure --
+                // see MetadataEnrichmentService's own 429 handling, which leaves the row Pending
+                // and stops the batch instead of burning a retry on every queued item.
                 throw new HttpRequestException(
                     $"SIMKL request quota was exhausted after {_successfulRequestsSinceLastLimit} " +
-                    $"successful calls; not retrying until {until:u}.");
+                    $"successful calls; not retrying until {until:u}.",
+                    null, HttpStatusCode.TooManyRequests);
         }
 
         var response = await _http.GetAsync(url, ct);
@@ -354,10 +375,11 @@ internal sealed class SimklClient : IDisposable
                 return;
 
             var until = DateTimeOffset.UtcNow + QuotaCooldown;
+            _maxSuccessfulRequestsObserved = Math.Max(_maxSuccessfulRequestsObserved, _successfulRequestsSinceLastLimit);
             _log.Warning(
-                "SIMKL request quota exhausted after {Count} successful calls this window -- " +
-                "pausing all SIMKL requests until {Until:u}",
-                _successfulRequestsSinceLastLimit, until);
+                "SIMKL request quota exhausted after {Count} successful calls this window " +
+                "(highest observed this session: {MaxObserved}) -- pausing all SIMKL requests until {Until:u}",
+                _successfulRequestsSinceLastLimit, _maxSuccessfulRequestsObserved, until);
             _rateLimitedUntil = until;
             _successfulRequestsSinceLastLimit = 0;
         }

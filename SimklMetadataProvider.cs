@@ -54,7 +54,21 @@ public sealed class SimklMetadataProvider : IMetadataProvider
             string.IsNullOrWhiteSpace(clientId))
             throw new InvalidOperationException("SIMKL plugin requires 'client_id' to be configured.");
 
-        _client = new SimklClient(clientId);
+        // "No OAuth required" (see this class's own header doc) was true for the original
+        // simkl-api-key-only design, but SIMKL's real behavior doesn't match that in
+        // practice: an unauthenticated /search/{type} request returns 200 OK with a genuinely
+        // empty result array rather than a 401 -- indistinguishable from "SIMKL has no match"
+        // for every single query, with nothing in Chronicle's own logs to say otherwise.
+        // Confirmed live (2026-09-04): 100% of SIMKL searches returned zero candidates,
+        // including for completely unambiguous titles ("Scrooged", "Dodgeball: A True
+        // Underdog Story"), while SimklImportProvider's sync calls (which DO pass the same
+        // stored access_token below) succeeded hundreds of times in the same session.
+        // access_token is set by SimklImportProvider's own PIN-auth flow and persisted
+        // alongside client_id in this plugin's ONE shared settings row (see that class's own
+        // Configure) -- reading it here too, rather than requiring a second separate auth
+        // flow, is why it's the same settings dictionary in the first place.
+        settings.TryGetValue("access_token", out var accessToken);
+        _client = new SimklClient(clientId, accessToken);
     }
 
     // ── Cross-reference capabilities ─────────────────────────────────────────
@@ -274,7 +288,10 @@ public sealed class SimklMetadataProvider : IMetadataProvider
         mediaTypeName?.ToLowerInvariant() switch
         {
             "anime"          => "anime",
-            "movie" or "movies" or "fanedits" => "movie",
+            // "anime_movies" previously fell through to the "tv" default below, so every anime
+            // movie (Appleseed, Evangelion, the Gundam films, ...) was searched against SIMKL's
+            // TV endpoint instead of movies and could never match.
+            "movie" or "movies" or "fanedits" or "anime_movies" => "movie",
             _                => "tv",
         };
 
