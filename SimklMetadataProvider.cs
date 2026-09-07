@@ -68,6 +68,23 @@ public sealed class SimklMetadataProvider : IMetadataProvider
         // Configure) -- reading it here too, rather than requiring a second separate auth
         // flow, is why it's the same settings dictionary in the first place.
         settings.TryGetValue("access_token", out var accessToken);
+        // Root-caused live (2026-09-07): access_token WAS already reaching this method correctly
+        // (the a1dc206 fix, 2026-09-04, was genuinely correct) -- confirmed via a one-shot live
+        // search test during investigation, which succeeded once verified. The real cause of
+        // "search returns zero candidates for completely unambiguous titles" was never a missing
+        // token: it was SIMKL's daily quota (~1,000/day free tier) getting exhausted within
+        // hours of that auth fix landing, once a 27,000+ item backlog started actually being
+        // searched for the first time -- and SIMKL doesn't reliably return 429 once over quota,
+        // it can keep answering 200 OK with a genuinely empty array. See SimklClient.
+        // GetWithRateLimitAsync's new X-RateLimit-Remaining handling for the real fix. Kept at
+        // Debug (not Information) since this confirms nothing is currently wrong -- it's a
+        // low-cost breadcrumb for a future "is the token even present" question, not a signal
+        // requiring attention on every plugin reconfigure.
+        Serilog.Log.ForContext<SimklMetadataProvider>().Debug(
+            "SIMKL metadata provider configured: client_id length={ClientIdLen}, " +
+            "access_token {TokenState}",
+            clientId.Length,
+            string.IsNullOrWhiteSpace(accessToken) ? "MISSING/EMPTY" : $"present (length={accessToken.Length})");
         _client = new SimklClient(clientId, accessToken);
     }
 

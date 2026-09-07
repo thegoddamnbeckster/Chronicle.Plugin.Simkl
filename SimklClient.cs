@@ -190,8 +190,50 @@ internal sealed class SimklClient : IDisposable
         var response = await GetWithRateLimitAsync($"/search/{type}?q={encoded}", ct);
         if (!response.IsSuccessStatusCode)
             await ThrowForFailureAsync(response, $"search/{type}?q={query}", ct);
-        return await response.Content.ReadFromJsonAsync<List<SimklSearchItem>>(ct) ?? [];
+
+        // Reads the body as a string first (rather than the old response.Content.
+        // ReadFromJsonAsync<List<SimklSearchItem>>(ct)) so a zero-or-unparseable body can be
+        // logged raw below -- confirmed live (2026-09-07) that a 2xx with an empty array is
+        // exactly how SIMKL answers once a client is over its daily quota, indistinguishable
+        // from "genuinely no match" without this. _webJsonOptions matches ReadFromJsonAsync's
+        // own implicit JsonSerializerDefaults.Web so this substitution doesn't quietly lose
+        // that leniency (e.g. AllowReadingFromString for a quoted numeric field).
+        var body = await response.Content.ReadAsStringAsync(ct);
+        List<SimklSearchItem> parsed;
+        try
+        {
+            parsed = string.IsNullOrWhiteSpace(body)
+                ? []
+                : JsonSerializer.Deserialize<List<SimklSearchItem>>(body, _webJsonOptions) ?? [];
+        }
+        catch (JsonException ex)
+        {
+            // Must be caught here, not left to propagate: a response shaped differently than
+            // expected (e.g. an error object instead of a bare array) is exactly the case the
+            // raw-body logging below exists to catch -- letting Deserialize's exception escape
+            // uncaught would skip that logging entirely and defeat the point of reading the body
+            // as a string first. Treated the same as a genuine zero-candidate response: return
+            // empty rather than fail the whole enrichment item over a response shape SIMKL is
+            // free to change.
+            Log.ForContext<SimklClient>().Warning(ex,
+                "SIMKL search/{Type}?q={Query} returned HTTP {Status} with a body that failed to " +
+                "parse as the expected candidate list -- raw body: {Body}",
+                type, query, (int)response.StatusCode, body.Length > 500 ? body[..500] : body);
+            return [];
+        }
+
+        if (parsed.Count == 0)
+            Log.ForContext<SimklClient>().Warning(
+                "SIMKL search/{Type}?q={Query} returned HTTP {Status} with 0 parsed candidates -- " +
+                "raw body: {Body}",
+                type, query, (int)response.StatusCode, body.Length > 500 ? body[..500] : body);
+        return parsed;
     }
+
+    // Matches HttpContent.ReadFromJsonAsync's own implicit JsonSerializerDefaults.Web -- see
+    // SearchMediaAsync's own comment for why this needed to become explicit once that call was
+    // replaced with a manual ReadAsStringAsync + Deserialize (to allow logging the raw body).
+    private static readonly JsonSerializerOptions _webJsonOptions = new(JsonSerializerDefaults.Web);
 
     /// <summary>Returns full metadata for a movie by its SIMKL ID, or null if that ID genuinely doesn't exist.</summary>
     internal async Task<SimklFullMedia?> GetMovieAsync(int simklId, CancellationToken ct)
@@ -354,11 +396,34 @@ internal sealed class SimklClient : IDisposable
             // SIMKL is documented to expose these on at least some responses; when present,
             // they're a more precise signal than our own count, so log them alongside it
             // rather than choosing one source over the other.
-            if (response.Headers.TryGetValues("X-RateLimit-Remaining", out var remaining)
-                && response.Headers.TryGetValues("X-RateLimit-Limit", out var limit))
+            if (response.Headers.TryGetValues("X-RateLimit-Remaining", out var remainingVals))
             {
-                _log.Debug("SIMKL rate-limit headers: {Remaining}/{Limit} remaining",
-                    remaining.FirstOrDefault(), limit.FirstOrDefault());
+                var remainingStr = remainingVals.FirstOrDefault();
+                var limitStr = response.Headers.TryGetValues("X-RateLimit-Limit", out var limitVals)
+                    ? limitVals.FirstOrDefault() : null;
+                _log.Debug("SIMKL rate-limit headers: {Remaining}/{Limit} remaining", remainingStr, limitStr);
+
+                // Root-caused live (2026-09-07): once over its daily quota, SIMKL does NOT
+                // reliably answer with 429 -- it can keep returning 200 OK with a genuinely
+                // empty result body instead, identical in shape to a real "no match". A
+                // 27,000+ item enrichment backlog (unresolved for days by the pre-a1dc206 auth
+                // bug) burned through the ~1,000/day free quota within hours of that fix
+                // landing, and every one of the tens of thousands of requests that followed
+                // that same day silently reported "not found" -- marking nearly the entire
+                // catalog NotFound (a terminal status) for a reason that had nothing to do
+                // with any of those items actually being absent from SIMKL. X-RateLimit-
+                // Remaining is the one signal SIMKL keeps sending accurately even on those
+                // degraded 200s, so treat it as authoritative: reaching 0 here pauses future
+                // requests via the exact same path a real 429 already does (caught by
+                // MetadataEnrichmentService as "provider unavailable", which leaves the
+                // in-flight row Pending and stops the batch -- never marks NotFound), just
+                // triggered BEFORE the next request goes out and quietly lies, instead of
+                // after. Gated on Remaining alone, deliberately NOT also requiring Limit to be
+                // present -- Limit is only ever used for the debug log above, and requiring
+                // both would let a degraded response that omits just Limit slip through
+                // ungated, silently reproducing the exact bug this exists to catch.
+                if (int.TryParse(remainingStr, out var remaining) && remaining <= 0)
+                    EnterQuotaCooldown();
             }
         }
 
