@@ -117,6 +117,17 @@ public sealed class SimklMetadataProvider : IMetadataProvider
             DefaultPriority = 10,
             SupportedFields = ["title", "overview", "year", "poster_url", "backdrop_url",
                                "runtime_minutes", "genres", "rating"],
+            // SIMKL has no standalone season/episode search -- only /search/{movie,tv,anime}
+            // for root-level shows and movies (SimklClient exposes no other search method).
+            // SearchAsync already returns [] immediately for these (see its own doc), but that
+            // alone left them sitting Pending forever, competing for a batch-pass slot a real
+            // rate-limit trip could strand along with genuinely enrichable items. An explicit
+            // EMPTY field list per level here (not simply omitting the key, which means "derive
+            // a default set instead") is what MetadataEnrichmentService.
+            // MarkHierarchyUnsupportedPendingAsSkippedAsync reads to remove them from Pending
+            // for good. Per-user report (2026-09-08): "If they are episodes and seasons, then
+            // they don't need to be in the queue at all."
+            LevelFields = new() { [1] = [], [2] = [] },
         },
         new MediaTypeSupport
         {
@@ -124,6 +135,9 @@ public sealed class SimklMetadataProvider : IMetadataProvider
             DefaultPriority = 10,
             SupportedFields = ["title", "overview", "year", "poster_url", "backdrop_url",
                                "runtime_minutes", "genres", "rating"],
+            // See the "tv" entry's own doc immediately above -- same reasoning, anime shows are
+            // just as hierarchical (season/episode) and SIMKL's search is equally flat.
+            LevelFields = new() { [1] = [], [2] = [] },
         },
         // Standalone anime films — flat like "movies", not hierarchical like "anime" (real anime
         // TV series). See Chronicle.Plugin.TMDB's anime_movies declaration for the full rationale.
