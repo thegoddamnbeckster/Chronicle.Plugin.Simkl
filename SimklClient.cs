@@ -223,10 +223,41 @@ internal sealed class SimklClient : IDisposable
         }
 
         if (parsed.Count == 0)
+        {
             Log.ForContext<SimklClient>().Warning(
                 "SIMKL search/{Type}?q={Query} returned HTTP {Status} with 0 parsed candidates -- " +
                 "raw body: {Body}",
                 type, query, (int)response.StatusCode, body.Length > 500 ? body[..500] : body);
+
+            // Root-caused live (2026-09-08): X-RateLimit-Remaining (GetWithRateLimitAsync's own
+            // exhaustion signal) never appears on THIS endpoint's responses at all, success or
+            // failure -- confirmed by a direct side-by-side comparison, a single manual
+            // /search/movie call for "1917" using these exact same credentials returned full,
+            // correct results seconds after Chronicle's own unthrottled sequential batch had
+            // logged dozens of consecutive empty results for equally unambiguous titles ("1917",
+            // "Midsommar", "Child's Play") in that same few-second window. So a real exhaustion
+            // (daily quota OR some shorter undocumented burst window -- SIMKL gives no header to
+            // tell them apart here) can still slip through with no signal in any single response.
+            // A long, unbroken run of zero-candidate searches for a plugin that otherwise finds
+            // real matches constantly is not a plausible run of genuine misses -- treat crossing
+            // the threshold as that same exhaustion, funnelled through EnterQuotaCooldown so this
+            // (and every subsequent) call gets the exact 429-shaped exception
+            // MetadataEnrichmentService already knows how to handle correctly (leaves the item
+            // Pending, stops the batch) instead of a silent, wrong NotFound.
+            if (Interlocked.Increment(ref _consecutiveEmptySearches) >= MaxConsecutiveEmptySearches)
+            {
+                EnterQuotaCooldown();
+                throw new HttpRequestException(
+                    $"SIMKL search/{type}?q={query} was the {_consecutiveEmptySearches}th " +
+                    "consecutive zero-candidate search -- treating this as silent rate/quota " +
+                    "exhaustion rather than that many genuine non-matches in a row.",
+                    null, HttpStatusCode.TooManyRequests);
+            }
+        }
+        else
+        {
+            Interlocked.Exchange(ref _consecutiveEmptySearches, 0);
+        }
         return parsed;
     }
 
@@ -338,6 +369,46 @@ internal sealed class SimklClient : IDisposable
     /// </summary>
     private static readonly TimeSpan QuotaCooldown = TimeSpan.FromHours(12);
 
+    /// <summary>
+    /// Minimum spacing enforced between consecutive requests to SIMKL, regardless of which
+    /// endpoint or SimklClient instance -- root-caused live (2026-09-08) as the actual cause of
+    /// search results silently going empty: SIMKL's /search endpoint never returns
+    /// X-RateLimit-* headers on any response (confirmed directly), so nothing before this
+    /// existed to stop an enrichment batch from firing requests as fast as one call could
+    /// complete and the next begin (~10+/sec observed live, entirely sequential -- every
+    /// plugin defaults to MaxEnrichmentConcurrency=1). A single manual call using the exact
+    /// same credentials, made seconds after dozens of that unthrottled batch's searches had
+    /// come back with 0 candidates for completely unambiguous titles, returned full correct
+    /// results -- proof SIMKL was silently throttling the burst itself, not genuinely lacking
+    /// those titles. Same idiom as Chronicle.Plugin.FanEdit's own "minimum 1-second delay
+    /// between requests"; this addresses the actual cause at the source instead of only
+    /// detecting its symptoms after the fact (see _consecutiveEmptySearches below for that
+    /// backstop, still needed since SIMKL's real daily quota is a separate, genuine limit this
+    /// pacing can't prevent).
+    /// </summary>
+    private static readonly TimeSpan MinRequestInterval = TimeSpan.FromSeconds(1);
+
+    private static readonly SemaphoreSlim _requestPacer = new(1, 1);
+    private static DateTimeOffset _lastRequestAt = DateTimeOffset.MinValue;
+
+    /// <summary>
+    /// Consecutive zero-candidate SearchMediaAsync results, process-lifetime. Reset to 0 by any
+    /// non-empty search result or by EnterQuotaCooldown (a fresh count once a cooldown --
+    /// whatever triggered it -- actually starts, rather than immediately re-tripping on the
+    /// first post-cooldown empty result from a streak that was already most of the way there).
+    /// </summary>
+    private static int _consecutiveEmptySearches;
+
+    /// <summary>
+    /// See SearchMediaAsync's own doc for the live evidence behind this. 20 unbroken zero-
+    /// candidate searches in a row from a plugin that otherwise matches constantly is not a
+    /// plausible run of genuine misses -- deliberately not lower: a real, if unlucky, run of
+    /// obscure/absent titles (fanedits, personal content) must not falsely pause the queue for
+    /// hours. A false trip here only costs a pause with items left Pending (nothing lost,
+    /// automatically retried later), so this favors a slightly slower catch over a jumpy one.
+    /// </summary>
+    private const int MaxConsecutiveEmptySearches = 20;
+
     private static readonly object _quotaLock = new();
     private static DateTimeOffset? _rateLimitedUntil;
     private static int _successfulRequestsSinceLastLimit;
@@ -369,6 +440,7 @@ internal sealed class SimklClient : IDisposable
                     null, HttpStatusCode.TooManyRequests);
         }
 
+        await PaceRequestAsync(ct);
         var response = await _http.GetAsync(url, ct);
 
         if (response.StatusCode == HttpStatusCode.TooManyRequests)
@@ -447,6 +519,27 @@ internal sealed class SimklClient : IDisposable
                 _successfulRequestsSinceLastLimit, _maxSuccessfulRequestsObserved, until);
             _rateLimitedUntil = until;
             _successfulRequestsSinceLastLimit = 0;
+        }
+
+        // Outside _quotaLock -- a plain Interlocked write, no need to hold the lock for it.
+        // See _consecutiveEmptySearches's own doc for why this resets here.
+        Interlocked.Exchange(ref _consecutiveEmptySearches, 0);
+    }
+
+    /// <summary>See MinRequestInterval's own doc for why this exists.</summary>
+    private static async Task PaceRequestAsync(CancellationToken ct)
+    {
+        await _requestPacer.WaitAsync(ct);
+        try
+        {
+            var wait = MinRequestInterval - (DateTimeOffset.UtcNow - _lastRequestAt);
+            if (wait > TimeSpan.Zero)
+                await Task.Delay(wait, ct);
+            _lastRequestAt = DateTimeOffset.UtcNow;
+        }
+        finally
+        {
+            _requestPacer.Release();
         }
     }
 
