@@ -223,41 +223,22 @@ internal sealed class SimklClient : IDisposable
         }
 
         if (parsed.Count == 0)
-        {
             Log.ForContext<SimklClient>().Warning(
                 "SIMKL search/{Type}?q={Query} returned HTTP {Status} with 0 parsed candidates -- " +
                 "raw body: {Body}",
                 type, query, (int)response.StatusCode, body.Length > 500 ? body[..500] : body);
-
-            // Root-caused live (2026-09-08): X-RateLimit-Remaining (GetWithRateLimitAsync's own
-            // exhaustion signal) never appears on THIS endpoint's responses at all, success or
-            // failure -- confirmed by a direct side-by-side comparison, a single manual
-            // /search/movie call for "1917" using these exact same credentials returned full,
-            // correct results seconds after Chronicle's own unthrottled sequential batch had
-            // logged dozens of consecutive empty results for equally unambiguous titles ("1917",
-            // "Midsommar", "Child's Play") in that same few-second window. So a real exhaustion
-            // (daily quota OR some shorter undocumented burst window -- SIMKL gives no header to
-            // tell them apart here) can still slip through with no signal in any single response.
-            // A long, unbroken run of zero-candidate searches for a plugin that otherwise finds
-            // real matches constantly is not a plausible run of genuine misses -- treat crossing
-            // the threshold as that same exhaustion, funnelled through EnterQuotaCooldown so this
-            // (and every subsequent) call gets the exact 429-shaped exception
-            // MetadataEnrichmentService already knows how to handle correctly (leaves the item
-            // Pending, stops the batch) instead of a silent, wrong NotFound.
-            if (Interlocked.Increment(ref _consecutiveEmptySearches) >= MaxConsecutiveEmptySearches)
-            {
-                EnterQuotaCooldown();
-                throw new HttpRequestException(
-                    $"SIMKL search/{type}?q={query} was the {_consecutiveEmptySearches}th " +
-                    "consecutive zero-candidate search -- treating this as silent rate/quota " +
-                    "exhaustion rather than that many genuine non-matches in a row.",
-                    null, HttpStatusCode.TooManyRequests);
-            }
-        }
-        else
-        {
-            Interlocked.Exchange(ref _consecutiveEmptySearches, 0);
-        }
+        // NOT the signal for RecordEmptyEnrichmentAttempt/RecordSuccessfulEnrichment below --
+        // root-caused live (2026-09-08): a raw parsed.Count > 0 here does NOT mean the search
+        // was actually useful. Generic queries this backlog produces constantly ("Season 1",
+        // "Season 2" -- a TV season's own MediaItem.Name, searched with no parent show name)
+        // return real, non-empty SIMKL candidate lists that every one of SimklMetadataProvider's
+        // own score() checks then rejects, so the ENRICHMENT still legitimately finds nothing --
+        // but this raw count would have looked "successful" and reset a streak counter placed
+        // here, masking a genuine silent-exhaustion run sitting right behind it (confirmed live:
+        // a real streak stalled at 1-3 over and over, reset every time one of these generic-but-
+        // non-empty queries landed). SimklMetadataProvider.SearchAsync tracks the streak instead,
+        // against its own POST-SCORING candidate count -- the layer that actually knows whether
+        // a result was useful, not just non-empty.
         return parsed;
     }
 
@@ -392,22 +373,59 @@ internal sealed class SimklClient : IDisposable
     private static DateTimeOffset _lastRequestAt = DateTimeOffset.MinValue;
 
     /// <summary>
-    /// Consecutive zero-candidate SearchMediaAsync results, process-lifetime. Reset to 0 by any
-    /// non-empty search result or by EnterQuotaCooldown (a fresh count once a cooldown --
-    /// whatever triggered it -- actually starts, rather than immediately re-tripping on the
-    /// first post-cooldown empty result from a streak that was already most of the way there).
+    /// Consecutive fully-empty enrichment attempts (see RecordEmptyEnrichmentAttempt's own doc
+    /// for why this is reported by the caller, not counted here from the raw HTTP response),
+    /// process-lifetime. Reset to 0 by RecordSuccessfulEnrichment or by EnterQuotaCooldown (a
+    /// fresh count once a cooldown -- whatever triggered it -- actually starts, rather than
+    /// immediately re-tripping on the first post-cooldown empty result from a streak that was
+    /// already most of the way there).
     /// </summary>
     private static int _consecutiveEmptySearches;
 
     /// <summary>
-    /// See SearchMediaAsync's own doc for the live evidence behind this. 20 unbroken zero-
-    /// candidate searches in a row from a plugin that otherwise matches constantly is not a
-    /// plausible run of genuine misses -- deliberately not lower: a real, if unlucky, run of
+    /// See RecordEmptyEnrichmentAttempt's own doc for the live evidence behind this. 20 unbroken
+    /// empty enrichment attempts in a row from a plugin that otherwise matches constantly is not
+    /// a plausible run of genuine misses -- deliberately not lower: a real, if unlucky, run of
     /// obscure/absent titles (fanedits, personal content) must not falsely pause the queue for
     /// hours. A false trip here only costs a pause with items left Pending (nothing lost,
     /// automatically retried later), so this favors a slightly slower catch over a jumpy one.
     /// </summary>
     private const int MaxConsecutiveEmptySearches = 20;
+
+    /// <summary>
+    /// Call after a SearchAsync attempt produces zero USEFUL candidates -- post-scoring, not the
+    /// raw SIMKL response count. Root-caused live (2026-09-08): this streak was originally
+    /// counted here in SimklClient, straight off SearchMediaAsync's raw parsed-candidate count,
+    /// and it never once reached its own threshold despite a real, confirmed silent-exhaustion
+    /// run: this plugin's actual backlog is dominated by generic single-word-ish queries (a TV
+    /// season's own MediaItem.Name is literally "Season 1", "Season 2", ... with no parent show
+    /// name attached), and SIMKL happily returns real, non-empty candidate lists for those --
+    /// every one of which SimklMetadataProvider's own Score() then correctly rejects as a bad
+    /// match. A raw non-empty response reset the streak every few items even during a genuine
+    /// exhaustion window sitting right behind it (confirmed live: a real streak observed via
+    /// direct instrumentation stalled at 1-3 repeatedly, reset each time one of these technically-
+    /// non-empty-but-useless responses landed). SimklMetadataProvider.SearchAsync calls this
+    /// against its own POST-SCORING candidate count instead -- the one signal that actually
+    /// reflects "did this search find anything real" rather than "did SIMKL send back JSON with
+    /// at least one element in it." May throw the same HttpRequestException(TooManyRequests)
+    /// EnterQuotaCooldown's other callers throw, once the streak crosses MaxConsecutiveEmptySearches.
+    /// </summary>
+    internal static void RecordEmptyEnrichmentAttempt()
+    {
+        if (Interlocked.Increment(ref _consecutiveEmptySearches) < MaxConsecutiveEmptySearches)
+            return;
+        var streak = _consecutiveEmptySearches;
+        EnterQuotaCooldown();
+        throw new HttpRequestException(
+            $"SIMKL found zero useful candidates for {streak} consecutive enrichment attempts " +
+            "-- treating this as silent rate/quota exhaustion rather than that many genuine " +
+            "non-matches in a row.",
+            null, HttpStatusCode.TooManyRequests);
+    }
+
+    /// <summary>See RecordEmptyEnrichmentAttempt's own doc.</summary>
+    internal static void RecordSuccessfulEnrichment() =>
+        Interlocked.Exchange(ref _consecutiveEmptySearches, 0);
 
     private static readonly object _quotaLock = new();
     private static DateTimeOffset? _rateLimitedUntil;

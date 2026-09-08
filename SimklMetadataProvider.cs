@@ -153,6 +153,7 @@ public sealed class SimklMetadataProvider : IMetadataProvider
             try
             {
                 var directMeta = await GetByIdAsync(knownSimklId, ct);
+                SimklClient.RecordSuccessfulEnrichment();
                 return [new ScoredCandidate(directMeta, 100, "known SIMKL ID")];
             }
             catch (KeyNotFoundException) { /* not found — fall through to text search */ }
@@ -163,6 +164,24 @@ public sealed class SimklMetadataProvider : IMetadataProvider
             }
             // Network/auth errors propagate — don't silently swallow transient failures.
         }
+
+        // SIMKL has no standalone season/episode search -- only /search/{movie,tv,anime} for
+        // root-level shows and movies (SimklClient exposes no other search method). A season or
+        // episode's own MediaItem.Name is generic and context-free ("Season 1", "Episode 3", a
+        // TV show's HierarchyLabels default) with no year, no distinguishing words -- a text
+        // search against it can never mean anything, and confirmed live (2026-09-08) as this
+        // backlog's dominant query shape, it was constantly burning real requests on a search
+        // that was always going to come back empty, no different in cost from this plugin's own
+        // rate-limit/exhaustion detection above. Per-user report the same day: "If things are
+        // going to simkl that should not be, that's wasting api calls. Stop them." Deliberately
+        // does NOT count as an empty enrichment attempt (no RecordEmptyEnrichmentAttempt call)
+        // -- skipping a call that was never going to be made says nothing about SIMKL's own
+        // health, unlike a real search that came back empty. Full season/episode support
+        // (resolving through the parent show's own SIMKL ID + season/episode number instead of
+        // a name search, the way Chronicle.Plugin.TheTVDB's SearchSeasonAsync/SearchEpisodeAsync
+        // already do) is a separate, larger piece of work this doesn't attempt.
+        if (context.HierarchyLevel > 0)
+            return [];
 
         var results   = await _client!.SearchMediaAsync(simklType, context.Name, ct);
 
@@ -177,6 +196,17 @@ public sealed class SimklMetadataProvider : IMetadataProvider
             if (score >= 40)
                 candidates.Add(new ScoredCandidate(meta, score, reason));
         }
+
+        // See SimklClient.RecordEmptyEnrichmentAttempt's own doc for why this is gated on
+        // candidates (post-scoring), not results (SIMKL's raw, unscored response) -- a raw
+        // non-empty response full of real but irrelevant matches (common for this backlog's
+        // many generic queries, e.g. a TV season's own bare "Season 1" name) must count as
+        // empty here exactly like a genuinely zero-candidate response would, or a real silent-
+        // exhaustion streak sitting behind a run of those gets reset before it can ever trip.
+        if (candidates.Count > 0)
+            SimklClient.RecordSuccessfulEnrichment();
+        else
+            SimklClient.RecordEmptyEnrichmentAttempt();
 
         return [.. candidates.OrderByDescending(c => c.Score)];
     }
