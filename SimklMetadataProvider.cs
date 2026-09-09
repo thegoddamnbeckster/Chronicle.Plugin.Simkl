@@ -197,14 +197,29 @@ public sealed class SimklMetadataProvider : IMetadataProvider
         if (context.HierarchyLevel > 0)
             return [];
 
-        var results   = await _client!.SearchMediaAsync(simklType, context.Name, ct);
+        var results = await _client!.SearchMediaAsync(simklType, context.Name, ct);
+
+        // Anime films aren't consistently filed under SIMKL's movie catalog -- confirmed live
+        // (2026-09-09): /search/movie returns nothing for some very mainstream anime films
+        // (Evangelion: 1.0, Mobile Suit Gundam: Hathaway) that DO exist under /search/anime,
+        // while others (Appleseed, its sequels) DO resolve under /search/movie. Only retried for
+        // "anime_movies" specifically -- a real (non-anime) movie search coming back empty is a
+        // genuine miss, not a wrong-catalog problem, so this must not cost every movie search a
+        // second SIMKL call.
+        var effectiveType = simklType;
+        if (results.Count == 0 &&
+            string.Equals(context.MediaTypeName, "anime_movies", StringComparison.OrdinalIgnoreCase))
+        {
+            results       = await _client!.SearchMediaAsync("anime", context.Name, ct);
+            effectiveType = "anime";
+        }
 
         var candidates = new List<ScoredCandidate>();
         foreach (var item in results)
         {
-            if (item.Ids.Simkl is not int simklId) continue;
-            var externalId = $"simkl:{simklType}:{simklId}";
-            var meta       = ToSearchMetadata(item, simklType, externalId);
+            if (item.Ids.EffectiveSimklId is not int simklId) continue;
+            var externalId = $"simkl:{effectiveType}:{simklId}";
+            var meta       = ToSearchMetadata(item, effectiveType, externalId);
             var (score, reason) = Score(context, item.Title, item.Year,
                 item.Ids.Imdb, item.Ids.Tmdb);
             if (score >= 40)
@@ -283,7 +298,7 @@ public sealed class SimklMetadataProvider : IMetadataProvider
             var simklType2 = tmdbType == "movie" ? "movie" : "show";
             var hit        = await _client!.SearchByForeignIdAsync("tmdb", tmdbId, simklType2, ct);
             var found      = hit?.Show ?? hit?.Movie;
-            if (found?.Ids.Simkl is not int resolvedId)
+            if (found?.Ids.EffectiveSimklId is not int resolvedId)
                 throw new KeyNotFoundException(
                     $"SIMKL could not resolve TMDB {externalId} to a SIMKL ID.");
             var resolvedType = tmdbType == "movie" ? "movie" : "tv";
@@ -296,7 +311,7 @@ public sealed class SimklMetadataProvider : IMetadataProvider
             var hit = await _client!.SearchByForeignIdAsync("imdb", imdbId, null, ct);
             var isMovie       = hit?.Movie is not null;
             var found         = hit?.Show ?? hit?.Movie;
-            if (found?.Ids.Simkl is not int resolvedImdbId)
+            if (found?.Ids.EffectiveSimklId is not int resolvedImdbId)
                 throw new KeyNotFoundException(
                     $"SIMKL could not resolve {externalId} to a SIMKL ID.");
             externalId = $"simkl:{(isMovie ? "movie" : "tv")}:{resolvedImdbId}";

@@ -30,11 +30,24 @@ internal record PinPollResponse(
 
 internal record SimklIds(
     [property: JsonPropertyName("simkl")]  int?    Simkl,
+    // SIMKL's /search/{type} and /search/id endpoints key the numeric id "simkl_id" instead
+    // of "simkl" -- every other endpoint (/sync/*, /movies/{id}, /tv/{id}) uses "simkl".
+    // Confirmed live (2026-09-09): every /search response candidate had this populated and
+    // Simkl above null, which made SimklMetadataProvider.SearchAsync's `item.Ids.Simkl is not
+    // int` check discard 100% of search results before scoring ever ran -- not an anime-
+    // specific or title-matching problem, every single SIMKL text search was silently
+    // returning zero usable candidates regardless of how exact the title match was
+    // (reproduced live with "Fight Club" itself). See EffectiveSimklId.
+    [property: JsonPropertyName("simkl_id")] int? SimklIdField,
     [property: JsonPropertyName("imdb")]   string? Imdb,
     [property: JsonPropertyName("tmdb")]   string? Tmdb,
     [property: JsonPropertyName("tvdb")]   string? Tvdb,
     [property: JsonPropertyName("mal")]    string? Mal        // MyAnimeList (for anime)
-);
+)
+{
+    /// <summary>The numeric SIMKL id, regardless of which key name this endpoint used for it.</summary>
+    internal int? EffectiveSimklId => Simkl ?? SimklIdField;
+}
 
 // ── /sync/all-items ───────────────────────────────────────────────────────────
 
