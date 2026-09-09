@@ -1,3 +1,4 @@
+using System;
 using System.Text.Json.Serialization;
 
 namespace Chronicle.Plugin.Simkl;
@@ -186,8 +187,25 @@ internal record SimklRatingDetail(
     [property: JsonPropertyName("votes")]  int?    Votes
 );
 
-/// <summary>Result item from GET /search/id — wraps either a show or movie field.</summary>
+/// <summary>
+/// Single item returned by GET /search/id. The field names below ("Show"/"Movie") used to
+/// suggest the response was nested under "show"/"movie" keys -- it isn't. Confirmed live
+/// (2026-09-09): a real response is a FLAT list of items carrying a "type" discriminator
+/// field instead, e.g. <c>[{"type":"movie","title":"Cam","year":2018,"ids":{"simkl":814770,
+/// "slug":"cam"}}]</c>. The old two-nullable-property shape silently deserialized to BOTH
+/// null on every real response -- "movie" only ever appeared as a VALUE of "type", never as
+/// an actual JSON property key -- which broke every caller (Fix Match's TMDB/IMDB
+/// cross-reference resolution in GetByIdAsync, and SearchAsync's own TMDB-cross-ref fallback)
+/// without ever surfacing an error, since a silently-null result reads identically to a
+/// genuine "SIMKL has no match" response.
+/// </summary>
 internal record SimklIdSearchResult(
-    [property: JsonPropertyName("show")]  SimklSearchItem? Show,
-    [property: JsonPropertyName("movie")] SimklSearchItem? Movie
-);
+    [property: JsonPropertyName("type")]   string?  Type,
+    [property: JsonPropertyName("title")]  string   Title,
+    [property: JsonPropertyName("year")]   int?     Year,
+    [property: JsonPropertyName("ids")]    SimklIds Ids,
+    [property: JsonPropertyName("poster")] string?  Poster
+)
+{
+    internal bool IsMovie => string.Equals(Type, "movie", StringComparison.OrdinalIgnoreCase);
+}

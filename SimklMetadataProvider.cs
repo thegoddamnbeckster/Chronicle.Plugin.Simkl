@@ -226,6 +226,47 @@ public sealed class SimklMetadataProvider : IMetadataProvider
                 candidates.Add(new ScoredCandidate(meta, score, reason));
         }
 
+        // Text search comes back genuinely empty for some real, catalogued SIMKL titles --
+        // confirmed live (2026-09-09) with "Dick Dynamite: 1944", a low-profile indie (4 SIMKL
+        // votes): /search/movie returned zero candidates on every attempt, yet GetByIdAsync
+        // against its exact SIMKL id (found via a manual Fix Match) resolved it immediately.
+        // SIMKL's own text-search index apparently doesn't cover every catalogued title, but
+        // its ID-based lookups do. If this item already has a TMDB id from another provider's
+        // own successful match (context.KnownExternalIds -- the same cross-ref plumbing
+        // FanartTV already relies on, since it has no text search of its own at all), SIMKL's
+        // /search/id endpoint can resolve it directly instead of giving up. Deliberately only
+        // tried when text search already came back empty, not unconditionally -- a second SIMKL
+        // call on every search would double this plugin's request volume for items text search
+        // already resolves fine.
+        // Checked against a real acceptance bar (50 -- MetadataEnrichmentService's own
+        // DefaultConfidenceThreshold, mirrored here since this plugin can't reference that
+        // constant directly), not candidates.Count == 0 -- confirmed live (2026-09-09) with
+        // "Cam": a single generic word, SIMKL's text search returns several real-but-irrelevant
+        // candidates that clear this method's own low >=40 inclusion bar (so candidates.Count > 0)
+        // without any of them ever being a real match, which would have skipped this fallback
+        // entirely even though the item was headed for NotFound regardless.
+        if (!candidates.Any(c => c.Score >= 50) &&
+            context.KnownExternalIds?.TryGetValue("tmdb", out var tmdbRaw) == true &&
+            !string.IsNullOrEmpty(tmdbRaw))
+        {
+            // TMDB's own stored external id is "movie:{id}" or "tv:{id}" (see FanartTvMetadataProvider's
+            // own doc for this same convention) -- only the numeric part means anything to SIMKL.
+            var tmdbId = tmdbRaw.Contains(':') ? tmdbRaw[(tmdbRaw.IndexOf(':') + 1)..] : tmdbRaw;
+            var idFilterType = effectiveType == "movie" ? "movie" : "show";
+            var hit = await _client!.SearchByForeignIdAsync("tmdb", tmdbId, idFilterType, ct);
+            if (hit?.Ids.EffectiveSimklId is int crossRefId)
+            {
+                var crossRefType = hit.IsMovie ? "movie" : effectiveType;
+                var externalId   = $"simkl:{crossRefType}:{crossRefId}";
+                var meta = new SimklSearchItem(hit.Title, hit.Year, hit.Ids, hit.Poster);
+                // A TMDB-id cross-reference is an authoritative identity match, not a fuzzy
+                // title guess -- scored like the "known SIMKL ID" fast path above, not run
+                // through Score().
+                candidates.Add(new ScoredCandidate(
+                    ToSearchMetadata(meta, crossRefType, externalId), 90, "tmdb-cross-ref"));
+            }
+        }
+
         // See SimklClient.RecordEmptyEnrichmentAttempt's own doc for why this is gated on
         // candidates (post-scoring), not results (SIMKL's raw, unscored response) -- a raw
         // non-empty response full of real but irrelevant matches (common for this backlog's
@@ -297,8 +338,7 @@ public sealed class SimklMetadataProvider : IMetadataProvider
             var tmdbId     = externalId[(colonIdx + 1)..];
             var simklType2 = tmdbType == "movie" ? "movie" : "show";
             var hit        = await _client!.SearchByForeignIdAsync("tmdb", tmdbId, simklType2, ct);
-            var found      = hit?.Show ?? hit?.Movie;
-            if (found?.Ids.EffectiveSimklId is not int resolvedId)
+            if (hit?.Ids.EffectiveSimklId is not int resolvedId)
                 throw new KeyNotFoundException(
                     $"SIMKL could not resolve TMDB {externalId} to a SIMKL ID.");
             var resolvedType = tmdbType == "movie" ? "movie" : "tv";
@@ -309,12 +349,10 @@ public sealed class SimklMetadataProvider : IMetadataProvider
             var imdbId = externalId[5..]; // strip "imdb:" prefix
             // No type filter — let the API response tell us movie vs show via which field is populated.
             var hit = await _client!.SearchByForeignIdAsync("imdb", imdbId, null, ct);
-            var isMovie       = hit?.Movie is not null;
-            var found         = hit?.Show ?? hit?.Movie;
-            if (found?.Ids.EffectiveSimklId is not int resolvedImdbId)
+            if (hit?.Ids.EffectiveSimklId is not int resolvedImdbId)
                 throw new KeyNotFoundException(
                     $"SIMKL could not resolve {externalId} to a SIMKL ID.");
-            externalId = $"simkl:{(isMovie ? "movie" : "tv")}:{resolvedImdbId}";
+            externalId = $"simkl:{(hit.IsMovie ? "movie" : "tv")}:{resolvedImdbId}";
         }
 
         // Format: simkl:{type}:{id}  e.g. "simkl:movie:636830"

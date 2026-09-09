@@ -282,7 +282,14 @@ internal sealed class SimklClient : IDisposable
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         if (!response.IsSuccessStatusCode)
             await ThrowForFailureAsync(response, url, ct);
-        var results = await response.Content.ReadFromJsonAsync<List<SimklIdSearchResult>>(ct);
+        // Read as a string and deserialize with the same explicit _webJsonOptions as
+        // SearchMediaAsync -- SimklIdSearchResult's own doc explains why this endpoint's real
+        // shape (a flat list with a "type" discriminator) needed correcting, not the parsing
+        // approach itself.
+        var body = await response.Content.ReadAsStringAsync(ct);
+        var results = string.IsNullOrWhiteSpace(body)
+            ? null
+            : JsonSerializer.Deserialize<List<SimklIdSearchResult>>(body, _webJsonOptions);
         return results?.FirstOrDefault();
     }
 
