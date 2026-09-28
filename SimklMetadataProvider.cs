@@ -256,14 +256,61 @@ public sealed class SimklMetadataProvider : IMetadataProvider
             var hit = await _client!.SearchByForeignIdAsync("tmdb", tmdbId, idFilterType, ct);
             if (hit?.Ids.EffectiveSimklId is int crossRefId)
             {
-                var crossRefType = hit.IsMovie ? "movie" : effectiveType;
-                var externalId   = $"simkl:{crossRefType}:{crossRefId}";
-                var meta = new SimklSearchItem(hit.Title, hit.Year, hit.Ids, hit.Poster);
-                // A TMDB-id cross-reference is an authoritative identity match, not a fuzzy
-                // title guess -- scored like the "known SIMKL ID" fast path above, not run
-                // through Score().
-                candidates.Add(new ScoredCandidate(
-                    ToSearchMetadata(meta, crossRefType, externalId), 90, "tmdb-cross-ref"));
+                // Root-caused live (2026-09-28): this fallback used to trust SIMKL's own
+                // TMDB-to-SIMKL cross-reference unconditionally at score 90, "authoritative,"
+                // with no check that the returned hit has anything to do with the item actually
+                // being searched for. SIMKL's own cross-reference table can be wrong -- confirmed
+                // at least 9 real cases where it pointed a search for one franchise entry at a
+                // DIFFERENT entry's SIMKL id: Sing -> Sing 2, Scream -> Scream VI, Teenage Mutant
+                // Ninja Turtles -> ...Out of the Shadows, Final Destination -> Bloodlines, The
+                // Craft -> Legacy, Demonic (2015) -> Demonic (2021), Guardians of the Galaxy
+                // Vol. 3 -> the Holiday Special, The Stand -> Stand-In, The Weekly -> The New
+                // York Times Presents. Title alone can't catch this: a sequel's title almost
+                // always CONTAINS the original's ("Scream" is a substring of "Scream VI"), so
+                // Score()'s own partial-title tier would pass every one of these. Year is the one
+                // signal that actually disagreed in every confirmed case, so a hit whose year
+                // flatly CONTRADICTS the search context's own known year is rejected outright,
+                // regardless of title similarity -- not scored down, rejected, since a franchise
+                // cross-ref this wrong is far more likely SIMKL's own bad mapping than a real
+                // match Chronicle should still consider. Neither year being known (an item with
+                // no year hint at all) falls back to the old trusting behavior -- there's no
+                // better signal available to check it against.
+                //
+                // Deliberately EXACT equality, not the +/-1-year tolerance this codebase uses
+                // elsewhere for "is this really the same release, just dated slightly differently
+                // by two sources" (FileScanService's own year scoring, MovieFileYearRepairService's
+                // MinYearGap=2) -- code review (2026-09-28) asked whether this guard should match
+                // that convention. It can't: Scream (2022) vs Scream VI (2023) is exactly a 1-year
+                // gap, and is one of the confirmed real cases this guard exists to catch, so a +/-1
+                // tolerance would let it straight back through. The two situations aren't the same
+                // question -- release-date tolerance corroborates "same movie, two sources," this
+                // guard is asking "different movie entirely" -- and a franchise sequel one year
+                // apart is common enough that leniency here would defeat the fix. This does mean a
+                // genuinely correct cross-ref can be wrongly rejected when Chronicle's OWN stored
+                // Year for the item is itself wrong (see MovieFileYearRepairService, which exists
+                // because that happens) -- accepted deliberately: the cost is a temporary NotFound,
+                // retried on the next pass, versus the cost on the other side of this tradeoff --
+                // a wrong movie's title/overview/poster merged onto the item, exactly what the 9
+                // confirmed cases above did before this fix.
+                if (CrossRefYearContradicts(context.Year, hit.Year))
+                {
+                    Serilog.Log.ForContext<SimklMetadataProvider>().Warning(
+                        "SIMKL tmdb-cross-ref for '{Name}' ({Year}) returned SIMKL id {CrossRefId} " +
+                        "\"{HitTitle}\" ({HitYear}) -- year contradicts the search context, rejecting " +
+                        "as a likely bad cross-reference rather than trusting it",
+                        context.Name, context.Year, crossRefId, hit.Title, hit.Year);
+                }
+                else
+                {
+                    var crossRefType = hit.IsMovie ? "movie" : effectiveType;
+                    var externalId   = $"simkl:{crossRefType}:{crossRefId}";
+                    var meta = new SimklSearchItem(hit.Title, hit.Year, hit.Ids, hit.Poster);
+                    // A TMDB-id cross-reference that doesn't contradict the known year is treated
+                    // as an authoritative identity match, not a fuzzy title guess -- scored like
+                    // the "known SIMKL ID" fast path above, not run through Score().
+                    candidates.Add(new ScoredCandidate(
+                        ToSearchMetadata(meta, crossRefType, externalId), 90, "tmdb-cross-ref"));
+                }
             }
         }
 
@@ -330,6 +377,19 @@ public sealed class SimklMetadataProvider : IMetadataProvider
         //   tv:{tmdbId}     → look up by TMDB ID as a show
         //   movie:{tmdbId}  → look up by TMDB ID as a movie
         //   imdb:{imdbId}   → look up by IMDB ID
+        //
+        // This calls the SAME SearchByForeignIdAsync SIMKL API that SearchAsync's own
+        // tmdb-cross-ref fallback guards against a wrong mapping (see that call site's own doc,
+        // CrossRefYearContradicts) -- code review (2026-09-28) flagged this one as unguarded too.
+        // It can't get the same fix: this method's own signature (GetByIdAsync(string, ...)) has
+        // no MediaSearchContext, so there is no known year to compare the hit against here. This
+        // path is reached from Fix Match's own pasted-id/URL flow and other plugins' cross-
+        // reference resolution -- both hand this method an id they already believe identifies a
+        // specific real item, so "trust the id resolves correctly" is this method's actual
+        // contract, unlike SearchAsync's fuzzy-match fallback. If SIMKL's cross-reference table is
+        // wrong here too, it surfaces the same way a bad Fix-Match paste would -- visibly, as a
+        // wrong match the user can see and correct -- not silently, the way the unguarded fallback
+        // used to.
         if (externalId.StartsWith("tv:", StringComparison.OrdinalIgnoreCase) ||
             externalId.StartsWith("movie:", StringComparison.OrdinalIgnoreCase))
         {
@@ -444,6 +504,15 @@ public sealed class SimklMetadataProvider : IMetadataProvider
             ExtendedData   = JsonSerializer.SerializeToElement(extData),
         };
     }
+
+    /// <summary>
+    /// True when a SIMKL tmdb-cross-ref hit's own year flatly contradicts the search context's
+    /// known year -- see the call site's own doc for the live cross-franchise mismatches this
+    /// rejects. Internal (not private) so it can be unit tested directly without needing to mock
+    /// SimklClient's HTTP calls.
+    /// </summary>
+    internal static bool CrossRefYearContradicts(int? contextYear, int? hitYear) =>
+        contextYear.HasValue && hitYear.HasValue && contextYear != hitYear;
 
     private static (int Score, string Reason) Score(
         MediaSearchContext ctx,

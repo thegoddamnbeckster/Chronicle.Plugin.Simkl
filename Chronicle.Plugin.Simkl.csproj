@@ -39,4 +39,11 @@
     </None>
   </ItemGroup>
 
+  <!-- The test project lives inside this repo; keep its sources out of the plugin assembly, and
+       let it reach internal test seams (e.g. SimklMetadataProvider.CrossRefYearContradicts). -->
+  <ItemGroup>
+    <Compile Remove="tests/**" />
+    <InternalsVisibleTo Include="Chronicle.Plugin.Simkl.Tests" />
+  </ItemGroup>
+
 </Project>
