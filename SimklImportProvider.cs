@@ -212,7 +212,7 @@ public sealed class SimklImportProvider : IImportProvider
         {
             if (!m.Status.Equals(completed, StringComparison.OrdinalIgnoreCase)) continue;
 
-            var key = $"simkl:{m.Movie.Ids.Simkl}";
+            var key = $"simkl:movie:{m.Movie.Ids.Simkl}";
             if (seenKeys.Contains(key)) continue;
             seenKeys.Add(key);
 
@@ -265,7 +265,7 @@ public sealed class SimklImportProvider : IImportProvider
                         // real per-episode data always wins, but "the whole show shares one date"
                         // must not be reported as if it were that episode's genuine watch time.
                         WatchedAtIsApproximate: realEpWatchedAt is null,
-                        ShowExternalId:  $"simkl:{showId}",
+                        ShowExternalId:  $"simkl:tv:{showId}",
                         ShowTitle:       s.Show.Title,
                         SeasonNumber:    season.Number,
                         EpisodeNumber:   ep.Number));
@@ -307,7 +307,7 @@ public sealed class SimklImportProvider : IImportProvider
                         // real per-episode data always wins, but "the whole show shares one date"
                         // must not be reported as if it were that episode's genuine watch time.
                         WatchedAtIsApproximate: realEpWatchedAt is null,
-                        ShowExternalId:  $"simkl:{showId}",
+                        ShowExternalId:  $"simkl:anime:{showId}",
                         ShowTitle:       a.Show.Title,
                         SeasonNumber:    season.Number,
                         EpisodeNumber:   ep.Number));
@@ -342,7 +342,7 @@ public sealed class SimklImportProvider : IImportProvider
         {
             if (m.UserRating.HasValue && m.UserRating > 0)
                 result.Add(new ImportedRating(
-                    ExternalId:    $"simkl:{m.Movie.Ids.Simkl}",
+                    ExternalId:    $"simkl:movie:{m.Movie.Ids.Simkl}",
                     AdditionalIds: BuildIds(m.Movie.Ids, "movie"),
                     MediaType:     "movie",
                     Title:         m.Movie.Title,
@@ -355,7 +355,7 @@ public sealed class SimklImportProvider : IImportProvider
         {
             if (s.UserRating.HasValue && s.UserRating > 0)
                 result.Add(new ImportedRating(
-                    ExternalId:    $"simkl:{s.Show.Ids.Simkl}",
+                    ExternalId:    $"simkl:tv:{s.Show.Ids.Simkl}",
                     AdditionalIds: BuildIds(s.Show.Ids, "tv"),
                     MediaType:     "tv",
                     Title:         s.Show.Title,
@@ -368,7 +368,7 @@ public sealed class SimklImportProvider : IImportProvider
         {
             if (a.UserRating.HasValue && a.UserRating > 0)
                 result.Add(new ImportedRating(
-                    ExternalId:    $"simkl:{a.Show.Ids.Simkl}",
+                    ExternalId:    $"simkl:anime:{a.Show.Ids.Simkl}",
                     AdditionalIds: BuildIds(a.Show.Ids, "anime"),
                     MediaType:     "anime",
                     Title:         a.Show.Title,
@@ -397,7 +397,7 @@ public sealed class SimklImportProvider : IImportProvider
             if (!m.Status.Equals(planStatus, StringComparison.OrdinalIgnoreCase)) continue;
             var addedAt = TryParseOffset(m.AddedToWatchlistAt) ?? DateTimeOffset.UtcNow;
             result.Add(new ImportedWatchlistEntry(
-                ExternalId:    $"simkl:{m.Movie.Ids.Simkl}",
+                ExternalId:    $"simkl:movie:{m.Movie.Ids.Simkl}",
                 AdditionalIds: BuildIds(m.Movie.Ids, "movie"),
                 MediaType:     "movie",
                 Title:         m.Movie.Title,
@@ -410,7 +410,7 @@ public sealed class SimklImportProvider : IImportProvider
             if (!s.Status.Equals(planStatus, StringComparison.OrdinalIgnoreCase)) continue;
             var addedAt = TryParseOffset(s.AddedToWatchlistAt) ?? DateTimeOffset.UtcNow;
             result.Add(new ImportedWatchlistEntry(
-                ExternalId:    $"simkl:{s.Show.Ids.Simkl}",
+                ExternalId:    $"simkl:tv:{s.Show.Ids.Simkl}",
                 AdditionalIds: BuildIds(s.Show.Ids, "tv"),
                 MediaType:     "tv",
                 Title:         s.Show.Title,
@@ -423,7 +423,7 @@ public sealed class SimklImportProvider : IImportProvider
             if (!a.Status.Equals(planStatus, StringComparison.OrdinalIgnoreCase)) continue;
             var addedAt = TryParseOffset(a.AddedToWatchlistAt) ?? DateTimeOffset.UtcNow;
             result.Add(new ImportedWatchlistEntry(
-                ExternalId:    $"simkl:{a.Show.Ids.Simkl}",
+                ExternalId:    $"simkl:anime:{a.Show.Ids.Simkl}",
                 AdditionalIds: BuildIds(a.Show.Ids, "anime"),
                 MediaType:     "anime",
                 Title:         a.Show.Title,
@@ -488,7 +488,7 @@ public sealed class SimklImportProvider : IImportProvider
         {
             "movie" when entry.Movie is not null =>
                 new ImportedWatchEvent(
-                    ExternalId:      $"simkl:{entry.Movie.Ids.Simkl}",
+                    ExternalId:      $"simkl:movie:{entry.Movie.Ids.Simkl}",
                     AdditionalIds:   BuildIds(entry.Movie.Ids, "movie"),
                     MediaType:       "movie",
                     Title:           entry.Movie.Title,
@@ -505,14 +505,14 @@ public sealed class SimklImportProvider : IImportProvider
                     Year:            entry.Show.Year,
                     WatchedAt:       watchedAt,
                     ProgressPercent: 100.0,
-                    ShowExternalId:  $"simkl:{entry.Show.Ids.Simkl}",
+                    ShowExternalId:  $"simkl:tv:{entry.Show.Ids.Simkl}",
                     ShowTitle:       entry.Show.Title,
                     SeasonNumber:    entry.Episode.Season,
                     EpisodeNumber:   entry.Episode.Episode),
 
             "show" when entry.Show is not null =>
                 new ImportedWatchEvent(
-                    ExternalId:      $"simkl:{entry.Show.Ids.Simkl}",
+                    ExternalId:      $"simkl:tv:{entry.Show.Ids.Simkl}",
                     AdditionalIds:   BuildIds(entry.Show.Ids, "tv"),
                     MediaType:       "tv",
                     Title:           entry.Show.Title,
@@ -529,14 +529,14 @@ public sealed class SimklImportProvider : IImportProvider
                     Year:            entry.Show.Year,
                     WatchedAt:       watchedAt,
                     ProgressPercent: 100.0,
-                    ShowExternalId:  $"simkl:{entry.Show.Ids.Simkl}",
+                    ShowExternalId:  $"simkl:anime:{entry.Show.Ids.Simkl}",
                     ShowTitle:       entry.Show.Title,
                     SeasonNumber:    entry.Episode.Season,
                     EpisodeNumber:   entry.Episode.Episode),
 
             "anime" when entry.Show is not null =>
                 new ImportedWatchEvent(
-                    ExternalId:      $"simkl:{entry.Show.Ids.Simkl}",
+                    ExternalId:      $"simkl:anime:{entry.Show.Ids.Simkl}",
                     AdditionalIds:   BuildIds(entry.Show.Ids, "anime"),
                     MediaType:       "anime",
                     Title:           entry.Show.Title,
@@ -578,14 +578,22 @@ public sealed class SimklImportProvider : IImportProvider
         DateTimeOffset.TryParse(s, out var dt) ? dt : null;
 
     /// <summary>
-    /// Parses a Simkl ExternalId of the form "simkl:12345" into the numeric Simkl ID.
-    /// Returns false if the format is unrecognised or the ID is not an integer.
+    /// Parses a Simkl ExternalId into its numeric Simkl ID. Accepts both this plugin's current
+    /// format ("simkl:movie:12345", matching SimklMetadataProvider.GetByIdAsync -- see that
+    /// method's own doc for why the type segment is required there) and the older bare
+    /// "simkl:12345" format this class itself used to write, so existing rows written before
+    /// that fix keep working. Root-caused live (2026-09-28): the two classes wrote two different
+    /// formats for the same real-world id, so an item created via import (bare) and one matched
+    /// via the metadata provider (type-prefixed) could never be recognized as duplicates of each
+    /// other -- confirmed with 18 movie pairs sharing a numeric id under both formats. The LAST
+    /// colon-separated segment is always the numeric id in both shapes, so parsing that way
+    /// (rather than a fixed index) handles both without needing to know which one this is.
     /// </summary>
     private static bool TryParseSimklId(string externalId, out int simklId)
     {
         simklId = 0;
         var parts = externalId.Split(':');
-        return parts.Length >= 2 && int.TryParse(parts[1], out simklId);
+        return parts.Length >= 2 && int.TryParse(parts[^1], out simklId);
     }
 
     // ── Guard helpers ─────────────────────────────────────────────────────────
