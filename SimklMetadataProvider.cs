@@ -9,11 +9,24 @@ namespace Chronicle.Plugin.Simkl;
 /// Supports Movies, TV Shows, and Anime using only the simkl-api-key header.
 /// No OAuth required — the import provider (SimklImportProvider) handles that separately.
 /// </summary>
-public sealed class SimklMetadataProvider : IMetadataProvider
+public sealed class SimklMetadataProvider : IMetadataProvider, IExternalIdPolicyProvider
 {
     // ── Identity ──────────────────────────────────────────────────────────────
 
     public string PluginId => "chronicle.plugin.simkl";
+
+    /// <summary>
+    /// The canonical id is "simkl:{movie|tv|anime}:N". The untyped "simkl:N" cannot be parsed by this plugin and duplicates the
+    /// typed form, so Chronicle never stores one. A Simkl id in another provider's cross-reference block is a bare number,
+    /// written with the type the item was filed as (an anime-type item gets the anime form).
+    /// </summary>
+    public ExternalIdPolicy GetExternalIdPolicy() => new()
+    {
+        Source = "simkl",
+        RefusedIdPattern = @"^simkl:\d+$",
+        CrossRefFormats = { ["movie"] = "simkl:movie:{id}", ["anime"] = "simkl:anime:{id}", ["default"] = "simkl:tv:{id}" },
+        CrossRefValueKinds = ["number"],
+    };
     public string Name     => "SIMKL";
     public string Version  => "1.0.0";
     public string Author   => "Chronicle Contributors";
