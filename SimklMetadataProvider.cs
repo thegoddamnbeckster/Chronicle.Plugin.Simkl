@@ -26,6 +26,7 @@ public sealed class SimklMetadataProvider : IMetadataProvider, IExternalIdPolicy
         RefusedIdPattern = @"^simkl:\d+$",
         CrossRefFormats = { ["movie"] = "simkl:movie:{id}", ["anime"] = "simkl:anime:{id}", ["default"] = "simkl:tv:{id}" },
         CrossRefValueKinds = ["number"],
+        FamilyIdPatterns = { ["movie"] = ":movie:" },
     };
     public string Name     => "SIMKL";
     public string Version  => "1.0.0";
