@@ -194,7 +194,7 @@ public class SimklExportTests
     }
 
     [Fact]
-    public async Task A_free_account_sends_no_rewatches_and_says_why()
+    public async Task A_free_account_sends_no_rewatches_and_counts_them_as_skipped_not_failed()
     {
         var simkl = new FakeSimkl { AccountType = "free" };
         var batch = Batch(new ExportWatch(Movie(), DateTimeOffset.Parse("2026-10-15T03:21:42Z"), true));
@@ -202,7 +202,9 @@ public class SimklExportTests
         var result = await SimklExportPusher.PushAsync(batch, simkl.Get, simkl.Post, CancellationToken.None);
 
         Assert.Empty(simkl.Posts);
-        Assert.Contains(result.Errors, e => e.Contains("Pro or VIP"));
+        Assert.Empty(result.Errors);          // an error would keep the export from ever being "caught up"
+        Assert.Equal(1, result.Skipped);
+        Assert.Equal(0, result.Deferred);
     }
 
     [Fact]
@@ -311,5 +313,19 @@ public class SimklExportTests
         Assert.Contains("export_enabled", keys);
         Assert.Contains("export_preview_only", keys);
         Assert.Contains("export_list_status", keys);
+    }
+
+    [Fact]
+    public void An_episode_listed_without_a_watch_time_is_not_a_remote_watch()
+    {
+        // include_all_episodes also lists episodes nobody watched: they must not count as watched on SIMKL
+        var shows = JsonDocument.Parse("{\"shows\":[{\"show\":{\"title\":\"S\",\"year\":2020,\"ids\":{\"simkl\":1}},\"seasons\":[{\"number\":1,\"episodes\":["
+            + "{\"number\":1,\"watched_at\":\"2024-01-02T03:04:05Z\"},{\"number\":2},{\"number\":3,\"watched_at\":null},{\"number\":4,\"watched_at\":\"1970-01-01T00:00:01Z\"}]}]}]}").RootElement;
+
+        var state = SimklExportMapper.ParseRemoteState(JsonDocument.Parse("[]").RootElement, shows);
+
+        Assert.Equal(2, state.Watches.Count);                                   // episode 1 (dated) and 4 (placeholder: watched, date unknown)
+        Assert.Contains(state.Watches, w => w.Item.EpisodeNumber == 1 && w.WatchedAt != DateTimeOffset.MinValue);
+        Assert.Contains(state.Watches, w => w.Item.EpisodeNumber == 4 && w.WatchedAt == DateTimeOffset.MinValue);
     }
 }

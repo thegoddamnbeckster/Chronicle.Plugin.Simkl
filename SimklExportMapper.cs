@@ -76,8 +76,12 @@ internal static class SimklExportMapper
                     if (Int(episode, "number") is not { } episodeNumber) continue;
                     var item = new ExportItemRef("tv_episode", $"S{seasonNumber:00}E{episodeNumber:00}", year, ids,
                         title, seasonNumber, episodeNumber);
+                    // include_all_episodes lists episodes the user has not watched too; those carry no watch time at all (a watch
+                    // of unknown date carries SIMKL's 1970 placeholder), and counting them would make an episode that was
+                    // watched here look as if SIMKL already had it, so it would never be sent.
                     var when = ReadTime(episode, "watched_at");
-                    watches.Add(new RemoteWatch(item, when is { } t && !IsPlaceholder(t) ? t : DateTimeOffset.MinValue));
+                    if (when is not { } t) continue;
+                    watches.Add(new RemoteWatch(item, IsPlaceholder(t) ? DateTimeOffset.MinValue : t));
                 }
             }
         }

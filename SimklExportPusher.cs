@@ -16,7 +16,7 @@ internal static class SimklExportPusher
         CancellationToken ct)
     {
         var errors = new List<string>();
-        int watchesPushed = 0, ratingsPushed = 0, statusesPushed = 0, notFound = 0, deferred = 0, requests = 0;
+        int watchesPushed = 0, ratingsPushed = 0, statusesPushed = 0, notFound = 0, deferred = 0, requests = 0, skipped = 0;
         var stopped = false;           // set by a rejection that makes further writes pointless (daily quota)
 
         // One batched write. Returns the (added, notFound) counts, or null when it was not sent.
@@ -69,8 +69,9 @@ internal static class SimklExportPusher
             var episodes = episodeWatches.Where(w => w.IsRewatch == rewatch).ToList();
             if (rewatch && !isPaid)
             {
-                var skipped = movies.Count + episodes.Count;
-                if (skipped > 0) errors.Add($"{skipped} rewatch(es) not sent: rewatches need a Simkl Pro or VIP account");
+                // Not an error and not deferred: a free account can never take these, and counting them as either would keep
+                // the export from ever being "all caught up", re-reading all of SIMKL after every import.
+                skipped += movies.Count + episodes.Count;
                 continue;
             }
             var path = rewatch ? "/sync/history?allow_rewatch=yes" : "/sync/history";
@@ -103,6 +104,6 @@ internal static class SimklExportPusher
             if (result is { } r) statusesPushed += r.Added;
         }
 
-        return new ExportPushResult(watchesPushed, ratingsPushed, statusesPushed, notFound, errors, deferred);
+        return new ExportPushResult(watchesPushed, ratingsPushed, statusesPushed, notFound, errors, deferred, skipped);
     }
 }
