@@ -20,7 +20,7 @@ namespace Chronicle.Plugin.Simkl;
 ///   X-RateLimit-Reset headers when the limit is active.
 ///   On 429 we wait for Retry-After seconds before retrying once.
 /// </summary>
-internal sealed class SimklClient : IDisposable
+internal sealed partial class SimklClient : IDisposable
 {
     private const string ApiBase = "https://api.simkl.com";
 

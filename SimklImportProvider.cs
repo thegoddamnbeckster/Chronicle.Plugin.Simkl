@@ -25,7 +25,7 @@ namespace Chronicle.Plugin.Simkl;
 /// Required settings: client_id
 /// Persisted post-auth: access_token
 /// </summary>
-public sealed class SimklImportProvider : IImportProvider
+public sealed partial class SimklImportProvider : IImportProvider
 {
     // ── IImportProvider identity ──────────────────────────────────────────────
 
@@ -72,6 +72,7 @@ public sealed class SimklImportProvider : IImportProvider
                 Type        = SettingType.Password,
                 Required    = false,
             },
+            .. ExportSettingDefinitions(),
         ]
     };
 
@@ -81,6 +82,7 @@ public sealed class SimklImportProvider : IImportProvider
     {
         settings.TryGetValue(KeyClientId,    out _clientId);
         settings.TryGetValue(KeyAccessToken, out _accessToken);
+        ConfigureExport(settings);
 
         _client?.Dispose();
         _client = string.IsNullOrWhiteSpace(_clientId)

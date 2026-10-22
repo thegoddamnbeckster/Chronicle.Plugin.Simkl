@@ -6,6 +6,11 @@
   "description":           "Metadata for Movies, TV, and Anime from SIMKL. Requires a free SIMKL API Client ID.",
   "min_chronicle_version": "1.0.0",
   "entry_type":            "Chronicle.Plugin.Simkl.SimklMetadataProvider",
+  "sourceUrls": [
+    { "match": "^simkl:tv:(\\d+)", "url": "https://simkl.com/tv/$1" },
+    { "match": "^simkl:movie:(\\d+)", "url": "https://simkl.com/movies/$1" },
+    { "match": "^simkl:anime:(\\d+)", "url": "https://simkl.com/anime/$1" }
+  ],
   "iconUrl":               "https://simkl.com/favicon.ico",
   "brandColorLight":       "#00b4d8",
   "brandColorDark":        "#0096b4",
