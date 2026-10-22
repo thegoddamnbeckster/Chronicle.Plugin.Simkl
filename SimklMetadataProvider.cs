@@ -54,19 +54,29 @@ public sealed class SimklMetadataProvider : IMetadataProvider, IExternalIdPolicy
             new SettingDefinition
             {
                 Key         = "client_id",
-                Label       = "SIMKL Client ID",
-                Description = "Your SIMKL API Client ID from simkl.com/settings/developer/",
+                Label       = "SIMKL Client ID (AUTH V1, legacy)",
+                Description = "Your SIMKL API Client ID from simkl.com/settings/developer/. Only needed while you are still logged in the old way.",
                 Type        = SettingType.Password,
-                Required    = true,
+                Required    = false,
+            },
+            new SettingDefinition
+            {
+                Key         = "client_id_v2",
+                Label       = "SIMKL Client ID (AUTH V2)",
+                Description = "The Client ID of a SIMKL app registered for AUTH V2. Preferred when set.",
+                Type        = SettingType.Text,
+                Required    = false,
             },
         ],
     };
 
     public void Configure(IReadOnlyDictionary<string, string> settings)
     {
-        if (!settings.TryGetValue("client_id", out var clientId) ||
-            string.IsNullOrWhiteSpace(clientId))
-            throw new InvalidOperationException("SIMKL plugin requires 'client_id' to be configured.");
+        // Either the AUTH V2 id or the legacy V1 id will do; the shared login picks the one that matches the token.
+        SimklCredentials.Shared.Apply(settings);
+        var clientId = SimklCredentials.Shared.ClientId;
+        if (string.IsNullOrWhiteSpace(clientId))
+            throw new InvalidOperationException("SIMKL plugin requires 'client_id' (or 'client_id_v2') to be configured.");
 
         // "No OAuth required" (see this class's own header doc) was true for the original
         // simkl-api-key-only design, but SIMKL's real behavior doesn't match that in
@@ -99,7 +109,8 @@ public sealed class SimklMetadataProvider : IMetadataProvider, IExternalIdPolicy
             "access_token {TokenState}",
             clientId.Length,
             string.IsNullOrWhiteSpace(accessToken) ? "MISSING/EMPTY" : $"present (length={accessToken.Length})");
-        _client = new SimklClient(clientId, accessToken);
+        _client?.Dispose();
+        _client = new SimklClient();
     }
 
     // ── Cross-reference capabilities ─────────────────────────────────────────

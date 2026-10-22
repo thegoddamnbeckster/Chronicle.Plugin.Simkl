@@ -25,9 +25,17 @@ internal sealed partial class SimklClient : IDisposable
     private const string ApiBase = "https://api.simkl.com";
 
     private readonly HttpClient _http;
+    private readonly SimklCredentials _credentials;
+    private readonly SimklOAuthClient _oauth;
 
-    internal SimklClient(string clientId, string? accessToken = null)
+    /// <summary>
+    /// The login is the shared, process-wide one by default (see <see cref="SimklCredentials"/>); tests pass their own
+    /// credentials and a fake <paramref name="inner"/> handler.
+    /// </summary>
+    internal SimklClient(SimklCredentials? credentials = null, SimklOAuthClient? oauth = null, HttpMessageHandler? inner = null)
     {
+        _credentials = credentials ?? SimklCredentials.Shared;
+        _oauth = oauth ?? new SimklOAuthClient();
         // This client lives for the plugin's entire lifetime (constructed once in
         // Configure(), never recreated) -- confirmed directly (2026-08-21) that every
         // search request eventually hung until Chronicle's own 25s provider-call guard
@@ -41,10 +49,10 @@ internal sealed partial class SimklClient : IDisposable
         // reconnect. PooledConnectionLifetime bounds how long any one connection is kept,
         // so a stale one gets torn down and replaced automatically instead of poisoning
         // every request behind it for the rest of the process's life.
-        var handler = new SocketsHttpHandler
+        var handler = new SimklIdentityHandler(_credentials, _oauth, inner ?? new SocketsHttpHandler
         {
             PooledConnectionLifetime = TimeSpan.FromMinutes(5),
-        };
+        });
         _http = new HttpClient(handler)
         {
             BaseAddress = new Uri(ApiBase),
@@ -53,24 +61,23 @@ internal sealed partial class SimklClient : IDisposable
             // instead of always bottoming out in the guard's generic message.
             Timeout = TimeSpan.FromSeconds(20),
         };
-        _http.DefaultRequestHeaders.Add("simkl-api-key", clientId);
+        // The client id, app-name/app-version, User-Agent and Bearer token are added per request by SimklIdentityHandler,
+        // which also renews a V2 token that is about to expire.
         _http.DefaultRequestHeaders.Accept.Add(
             new MediaTypeWithQualityHeaderValue("application/json"));
-
-        if (!string.IsNullOrWhiteSpace(accessToken))
-            _http.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", accessToken);
     }
 
-    internal void SetAccessToken(string accessToken)
-    {
-        _http.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue("Bearer", accessToken);
-    }
+    // ── Auth V2 (device flow) ─────────────────────────────────────────────────
+
+    internal Task<DeviceCodeResponse> RequestDeviceCodeAsync(string clientIdV2, CancellationToken ct) =>
+        _oauth.RequestDeviceCodeAsync(clientIdV2, ct);
+
+    internal Task<OAuthResult> PollDeviceAsync(string clientIdV2, string deviceCode, CancellationToken ct) =>
+        _oauth.PollDeviceAsync(clientIdV2, deviceCode, ct);
 
     // ── Auth ──────────────────────────────────────────────────────────────────
 
-    /// <summary>Starts the PIN auth flow. Returns the PIN info.</summary>
+    /// <summary>Starts the legacy (AUTH V1) PIN auth flow. Returns the PIN info.</summary>
     internal async Task<PinCodeResponse> RequestPinAsync(string clientId, CancellationToken ct)
     {
         var response = await _http.GetAsync($"/oauth/pin?client_id={clientId}", ct);

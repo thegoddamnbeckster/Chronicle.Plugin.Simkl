@@ -37,15 +37,21 @@ public sealed partial class SimklImportProvider : IImportProvider
 
     // ── Settings keys ─────────────────────────────────────────────────────────
 
-    private const string KeyClientId    = "client_id";
-    private const string KeyAccessToken = "access_token";
+    private const string KeyClientId    = SimklCredentials.KeyClientId;
+    private const string KeyClientIdV2  = SimklCredentials.KeyClientIdV2;
+    private const string KeyAccessToken = SimklCredentials.KeyAccessToken;
+    private const string KeyRefreshToken = SimklCredentials.KeyRefreshToken;
+    private const string KeyExpiresAt   = SimklCredentials.KeyExpiresAt;
 
     // ── Runtime state ─────────────────────────────────────────────────────────
 
-    private string? _clientId;
-    private string? _accessToken;
+    // The login (client ids, tokens) lives in SimklCredentials.Shared so this provider and the metadata provider always
+    // use the same, current token - see that class for why.
+    private static SimklCredentials Credentials => SimklCredentials.Shared;
+    private string? _clientId => Credentials.ClientId;
+    private string? _accessToken => Credentials.AccessToken;
 
-    // Stored at auth-start time so we can poll with it.
+    // Stored at auth-start time so we can poll with it (V1 PIN flow only).
     private string? _pendingUserCode;
 
     private SimklClient? _client;
@@ -59,10 +65,18 @@ public sealed partial class SimklImportProvider : IImportProvider
             new SettingDefinition
             {
                 Key         = KeyClientId,
-                Label       = "Client ID",
-                Description = "Your Simkl Client ID from https://simkl.com/settings/developer — use the 'Client ID' value (the first one), NOT the 'Client Secret'.",
+                Label       = "Client ID (AUTH V1, legacy)",
+                Description = "Your Simkl Client ID from https://simkl.com/settings/developer — use the 'Client ID' value (the first one), NOT the 'Client Secret'. Only needed while you are still logged in the old way; SIMKL retires AUTH V1 around April 2027.",
                 Type        = SettingType.Text,
-                Required    = true,
+                Required    = false,
+            },
+            new SettingDefinition
+            {
+                Key         = KeyClientIdV2,
+                Label       = "Client ID (AUTH V2)",
+                Description = "The Client ID of a SIMKL app registered for AUTH V2 (simkl.com/settings/developer). With this set, 'Authenticate' uses the new device login and the token renews itself.",
+                Type        = SettingType.Text,
+                Required    = false,
             },
             new SettingDefinition
             {
@@ -70,6 +84,22 @@ public sealed partial class SimklImportProvider : IImportProvider
                 Label       = "Access Token",
                 Description = "Stored automatically after authentication. Do not edit manually.",
                 Type        = SettingType.Password,
+                Required    = false,
+            },
+            new SettingDefinition
+            {
+                Key         = KeyRefreshToken,
+                Label       = "Refresh Token",
+                Description = "Stored automatically after AUTH V2 authentication. Do not edit manually.",
+                Type        = SettingType.Password,
+                Required    = false,
+            },
+            new SettingDefinition
+            {
+                Key         = KeyExpiresAt,
+                Label       = "Token Expires At",
+                Description = "Stored automatically (Unix seconds). Do not edit manually.",
+                Type        = SettingType.Text,
                 Required    = false,
             },
             .. ExportSettingDefinitions(),
@@ -80,15 +110,18 @@ public sealed partial class SimklImportProvider : IImportProvider
 
     public void Configure(IReadOnlyDictionary<string, string> settings)
     {
-        settings.TryGetValue(KeyClientId,    out _clientId);
-        settings.TryGetValue(KeyAccessToken, out _accessToken);
+        Credentials.Apply(settings);
         ConfigureExport(settings);
 
         _client?.Dispose();
-        _client = string.IsNullOrWhiteSpace(_clientId)
-            ? null
-            : new SimklClient(_clientId, _accessToken);
+        _client = string.IsNullOrWhiteSpace(_clientId) ? null : new SimklClient();
     }
+
+    /// <summary>
+    /// Tokens renewed since the host last saved settings. AUTH V2 refreshing invalidates the old access token at once, so
+    /// the host must persist the new ones or the next start would send a dead token.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? GetRefreshedSettings() => Credentials.TakeUnsavedSettings();
 
     // ── Auth ──────────────────────────────────────────────────────────────────
 
@@ -96,6 +129,21 @@ public sealed partial class SimklImportProvider : IImportProvider
     {
         EnsureClientId();
         var client   = GetOrCreateClient();
+
+        // AUTH V2 (device flow) as soon as a V2 Client ID is set; the legacy PIN flow otherwise.
+        if (Credentials.ClientIdV2 is { } clientIdV2)
+        {
+            var code = await client.RequestDeviceCodeAsync(clientIdV2, ct);
+            return new DeviceAuthStart(
+                UserCode:               code.UserCode,
+                VerificationUrl:        string.IsNullOrEmpty(code.VerificationUriComplete)
+                                            ? (code.VerificationUri ?? "https://simkl.com/pin")
+                                            : code.VerificationUriComplete,
+                ExpiresInSeconds:       code.ExpiresIn > 0 ? code.ExpiresIn : 900,
+                PollingIntervalSeconds: Math.Max(code.Interval, 5),
+                PollCode:               code.DeviceCode);
+        }
+
         var response = await client.RequestPinAsync(_clientId!, ct);
 
         // Store the user code so PollAuthAsync can use it as the poll code.
@@ -123,6 +171,28 @@ public sealed partial class SimklImportProvider : IImportProvider
 
         try
         {
+            if (Credentials.ClientIdV2 is { } clientIdV2)
+            {
+                var polled = await client.PollDeviceAsync(clientIdV2, pollCode, ct);
+                switch (polled.State)
+                {
+                    case OAuthState.Ok:
+                        Credentials.Store(polled.Token!);
+                        // The host merges these into the settings row; take them now so the refresh path does not offer the same values again.
+                        return new DeviceAuthPollResult(
+                            Status: DeviceAuthStatus.Authorized,
+                            NewSettings: Credentials.TakeUnsavedSettings()!.ToDictionary(kv => kv.Key, kv => kv.Value));
+                    case OAuthState.Pending:
+                    case OAuthState.SlowDown:
+                    case OAuthState.Unreachable:
+                        return new DeviceAuthPollResult(DeviceAuthStatus.Pending);
+                    case OAuthState.Expired:
+                        return new DeviceAuthPollResult(DeviceAuthStatus.Expired, ErrorMessage: "The login code expired. Start again.");
+                    default:
+                        return new DeviceAuthPollResult(DeviceAuthStatus.Denied, ErrorMessage: "SIMKL refused the login.");
+                }
+            }
+
             var result = await client.PollPinAsync(pollCode, _clientId!, ct);
 
             if (result?.AccessToken is null)
@@ -621,7 +691,7 @@ public sealed partial class SimklImportProvider : IImportProvider
         if (_client is null)
         {
             EnsureClientId();
-            _client = new SimklClient(_clientId!, _accessToken);
+            _client = new SimklClient();
         }
         return _client;
     }
