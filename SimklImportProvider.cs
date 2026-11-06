@@ -31,7 +31,7 @@ public sealed partial class SimklImportProvider : IImportProvider
 
     public string PluginId    => "chronicle.plugin.simkl";
     public string Name        => "Simkl";
-    public string Version     => "1.1.1";
+    public string Version     => System.Reflection.CustomAttributeExtensions.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(typeof(SimklImportProvider).Assembly)?.InformationalVersion.Split('+')[0] ?? "1.7.0";
     public string Author      => "Michael Beck";
     public string Description => "Import watch history, ratings and watchlist from Simkl";
 

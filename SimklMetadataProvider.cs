@@ -29,7 +29,7 @@ public sealed class SimklMetadataProvider : IMetadataProvider, IExternalIdPolicy
         FamilyIdPatterns = { ["movie"] = ":movie:" },
     };
     public string Name     => "SIMKL";
-    public string Version  => "1.0.0";
+    public string Version  => System.Reflection.CustomAttributeExtensions.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(typeof(SimklMetadataProvider).Assembly)?.InformationalVersion.Split('+')[0] ?? "1.7.0";
     public string Author   => "Chronicle Contributors";
 
     // ── Image URL helpers ─────────────────────────────────────────────────────
@@ -456,11 +456,8 @@ public sealed class SimklMetadataProvider : IMetadataProvider, IExternalIdPolicy
 
     // ── Image proxy ───────────────────────────────────────────────────────────
 
-    public async Task<byte[]> GetImageAsync(string url, CancellationToken ct = default)
-    {
-        using var http = new HttpClient();
-        return await http.GetByteArrayAsync(url, ct);
-    }
+    public Task<byte[]> GetImageAsync(string url, CancellationToken ct = default)
+        => throw new NotSupportedException("Images are loaded by the browser straight from the address in the metadata; this plugin has nothing to fetch.");
 
     // ── Health check ──────────────────────────────────────────────────────────
 
