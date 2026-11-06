@@ -176,7 +176,7 @@ public class SimklAuthV2Tests
         var api = new Fake { Respond = (_, _) => new HttpResponseMessage(HttpStatusCode.Unauthorized) };
         var client = ClientFor(Credentials(V2Token, "simkl_rt_1", DateTimeOffset.UtcNow.AddDays(3)), api, oauth);
 
-        await Assert.ThrowsAsync<HttpRequestException>(() => client.GetJsonAsync("/sync/activities", default));
+        await Assert.ThrowsAsync<Chronicle.Plugins.PluginAuthException>(() => client.GetJsonAsync("/sync/activities", default));
 
         Assert.Equal(2, api.Calls);
         Assert.Equal(1, oauth.Calls);
@@ -188,7 +188,7 @@ public class SimklAuthV2Tests
         var api = new Fake { Respond = (_, _) => new HttpResponseMessage(HttpStatusCode.Unauthorized) };
         var client = ClientFor(Credentials(V1Token), api, new Fake());
 
-        await Assert.ThrowsAsync<HttpRequestException>(() => client.GetJsonAsync("/sync/activities", default));
+        await Assert.ThrowsAsync<Chronicle.Plugins.PluginAuthException>(() => client.GetJsonAsync("/sync/activities", default));
 
         Assert.Equal(1, api.Calls);
     }
@@ -315,5 +315,23 @@ public class SimklAuthV2Tests
         var result = await new SimklOAuthClient(oauth).PollDeviceAsync(V2Id, "dc", default);
 
         Assert.Equal(OAuthState.Unreachable, result.State);
+    }
+
+    // ── the checklist's K7: a failing call must not carry a token out in its error ──
+
+    [Theory]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.BadRequest)]
+    [InlineData(HttpStatusCode.NotFound)]
+    public async Task A_failing_call_leaves_the_access_and_refresh_tokens_out_of_the_error(HttpStatusCode code)
+    {
+        var api = new Fake { Respond = (_, _) => new HttpResponseMessage(code) { Content = new StringContent("{\"error\":\"nope\"}") } };
+        var client = ClientFor(Credentials(V2Token, "simkl_rt_SECRETREFRESH123", DateTimeOffset.UtcNow.AddDays(3)), api, new Fake());
+
+        var ex = await Record.ExceptionAsync(() => client.GetJsonAsync("/sync/activities", default));
+
+        Assert.NotNull(ex);
+        Assert.DoesNotContain(V2Token, ex!.ToString());
+        Assert.DoesNotContain("simkl_rt_SECRETREFRESH123", ex.ToString());
     }
 }

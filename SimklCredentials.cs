@@ -251,7 +251,7 @@ internal sealed class SimklOAuthClient
             new Dictionary<string, string> { ["client_id"] = clientId, ["scope"] = SimklCredentials.Scope }, ct);
         DeviceCodeResponse? code = null;
         if (status == 200 && body is not null)
-            try { code = JsonSerializer.Deserialize<DeviceCodeResponse>(body); } catch (JsonException) { }
+            try { code = JsonSerializer.Deserialize<DeviceCodeResponse>(body); } catch (JsonException ex) { Log.Debug("SIMKL device-code answer was not readable: {Reason}", ex.Message); }
         if (code is null || string.IsNullOrEmpty(code.DeviceCode) || string.IsNullOrEmpty(code.UserCode))
             throw new HttpRequestException($"SIMKL did not give a login code (HTTP {status}). Check the V2 Client ID.");
         return code;
@@ -292,7 +292,7 @@ internal sealed class SimklOAuthClient
                 }
                 if (doc.RootElement.TryGetProperty("error", out var e)) error = e.GetString();
             }
-            catch (JsonException) { }
+            catch (JsonException ex) { Log.Debug("SIMKL token answer was not readable: {Reason}", ex.Message); }
         }
 
         return error switch

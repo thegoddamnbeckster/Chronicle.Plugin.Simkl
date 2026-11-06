@@ -312,6 +312,10 @@ internal sealed partial class SimklClient : IDisposable
     {
         var body = await response.Content.ReadAsStringAsync(ct);
         var snippet = body.Length > 300 ? body[..300] : body;
+        // A 401 after the identity handler already renewed the token once means the login is gone, not that this call was unlucky.
+        if (response.StatusCode == HttpStatusCode.Unauthorized)
+            throw new Chronicle.Plugins.PluginAuthException("chronicle.plugin.simkl",
+                "SIMKL rejected the login. Open the plugin settings and sign in to SIMKL again.");
         // StatusCode carried on the exception (not just embedded in the message) so callers can
         // tell a 429 or a 404 apart from a generic failure without parsing text -- previously
         // every non-2xx here (401 expired token, 429 exhausted quota, 5xx outage) looked
