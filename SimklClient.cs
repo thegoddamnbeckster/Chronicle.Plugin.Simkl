@@ -438,7 +438,7 @@ internal sealed partial class SimklClient : IDisposable
             $"SIMKL found zero useful candidates for {streak} consecutive enrichment attempts " +
             "-- treating this as silent rate/quota exhaustion rather than that many genuine " +
             "non-matches in a row.",
-            null, HttpStatusCode.TooManyRequests);
+            null, HttpStatusCode.TooManyRequests) { Data = { ["RetryAfter"] = QuotaCooldown } };
     }
 
     /// <summary>See RecordEmptyEnrichmentAttempt's own doc.</summary>
@@ -473,7 +473,7 @@ internal sealed partial class SimklClient : IDisposable
                 throw new HttpRequestException(
                     $"SIMKL request quota was exhausted after {_successfulRequestsSinceLastLimit} " +
                     $"successful calls; not retrying until {until:u}.",
-                    null, HttpStatusCode.TooManyRequests);
+                    null, HttpStatusCode.TooManyRequests) { Data = { ["RetryAfter"] = until - DateTimeOffset.UtcNow } };
         }
 
         await PaceRequestAsync(ct);
