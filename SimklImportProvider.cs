@@ -219,7 +219,7 @@ public sealed partial class SimklImportProvider : IImportProvider
     // ── Capabilities ──────────────────────────────────────────────────────────
 
     public ImportCapabilities GetCapabilities() =>
-        new(SupportsHistory: true, SupportsRatings: true, SupportsWatchlist: true);
+        new(SupportsHistory: true, SupportsRatings: true, SupportsWatchlist: true) { SupportsShowHistory = true };
 
     // ── Import — history ──────────────────────────────────────────────────────
 
@@ -305,89 +305,129 @@ public sealed partial class SimklImportProvider : IImportProvider
 
         // ── TV shows — per-episode from extended data ──────────────────────────
         foreach (var s in showsExt)
-        {
-            if (s.Seasons is null || s.Seasons.Count == 0) continue;
+            AddExtendedShowEpisodes(s, anime: false, since, seenKeys, result);
 
-            var showId       = s.Show.Ids.Simkl;
-            var realShowWatchedAt = TryParseOffset(s.LastWatchedAt);
-            var showWatchedAt = realShowWatchedAt ?? DateTimeOffset.UtcNow;
-
-            foreach (var season in s.Seasons)
-            {
-                foreach (var ep in season.Episodes ?? [])
-                {
-                    var key = $"simkl:{showId}:s{season.Number}e{ep.Number}";
-                    if (seenKeys.Contains(key)) continue;
-                    seenKeys.Add(key);
-
-                    var realEpWatchedAt = TryParseOffset(ep.WatchedAt);
-                    var epWatchedAt = realEpWatchedAt ?? showWatchedAt;
-                    if (since.HasValue && epWatchedAt < since.Value) continue;
-
-                    result.Add(new ImportedWatchEvent(
-                        ExternalId:      key,
-                        AdditionalIds:   BuildIds(s.Show.Ids, "tv"),
-                        MediaType:       "tv_episode",
-                        Title:           $"S{season.Number:D2}E{ep.Number:D2}",
-                        Year:            s.Show.Year,
-                        WatchedAt:       epWatchedAt,
-                        ProgressPercent: 100.0,
-                        // Borrowing the SHOW's own last-watched date for an episode SIMKL never
-                        // gave its own timestamp is still an approximation for that episode --
-                        // real per-episode data always wins, but "the whole show shares one date"
-                        // must not be reported as if it were that episode's genuine watch time.
-                        WatchedAtIsApproximate: realEpWatchedAt is null,
-                        ShowExternalId:  $"simkl:tv:{showId}",
-                        ShowTitle:       s.Show.Title,
-                        SeasonNumber:    season.Number,
-                        EpisodeNumber:   ep.Number));
-                }
-            }
-        }
-
-        // ── Anime — per-episode from extended data ────────────────────────────
+        // Anime: per-episode from extended data
         foreach (var a in animeExt)
-        {
-            if (a.Seasons is null || a.Seasons.Count == 0) continue;
-
-            var showId        = a.Show.Ids.Simkl;
-            var realShowWatchedAt = TryParseOffset(a.LastWatchedAt);
-            var showWatchedAt = realShowWatchedAt ?? DateTimeOffset.UtcNow;
-
-            foreach (var season in a.Seasons)
-            {
-                foreach (var ep in season.Episodes ?? [])
-                {
-                    var key = $"simkl:{showId}:s{season.Number}e{ep.Number}";
-                    if (seenKeys.Contains(key)) continue;
-                    seenKeys.Add(key);
-
-                    var realEpWatchedAt = TryParseOffset(ep.WatchedAt);
-                    var epWatchedAt = realEpWatchedAt ?? showWatchedAt;
-                    if (since.HasValue && epWatchedAt < since.Value) continue;
-
-                    result.Add(new ImportedWatchEvent(
-                        ExternalId:      key,
-                        AdditionalIds:   BuildIds(a.Show.Ids, "anime"),
-                        MediaType:       "anime_episode",
-                        Title:           $"S{season.Number:D2}E{ep.Number:D2}",
-                        Year:            a.Show.Year,
-                        WatchedAt:       epWatchedAt,
-                        ProgressPercent: 100.0,
-                        // Borrowing the SHOW's own last-watched date for an episode SIMKL never
-                        // gave its own timestamp is still an approximation for that episode --
-                        // real per-episode data always wins, but "the whole show shares one date"
-                        // must not be reported as if it were that episode's genuine watch time.
-                        WatchedAtIsApproximate: realEpWatchedAt is null,
-                        ShowExternalId:  $"simkl:anime:{showId}",
-                        ShowTitle:       a.Show.Title,
-                        SeasonNumber:    season.Number,
-                        EpisodeNumber:   ep.Number));
-                }
-            }
-        }
+            AddExtendedShowEpisodes(a, anime: true, since, seenKeys, result);
 
         return result;
+    }
+
+    /// <summary>
+    /// Maps one show's per-episode data from the extended all-items lists (/sync/all-items/{shows,anime}?extended=full)
+    /// into watch events. Shared by the periodic history pull and the single-show pull so both file an episode identically.
+    /// Episodes watched before <paramref name="since"/> are skipped; a null <paramref name="since"/> maps every episode.
+    /// </summary>
+    private static void AddExtendedShowEpisodes(
+        AllItemsItemExtended s, bool anime, DateTimeOffset? since,
+        HashSet<string> seenKeys, List<ImportedWatchEvent> result)
+    {
+        if (s.Seasons is null || s.Seasons.Count == 0) return;
+
+        var kind              = anime ? "anime" : "tv";
+        var showId            = s.Show.Ids.Simkl;
+        var realShowWatchedAt = TryParseOffset(s.LastWatchedAt);
+        var showWatchedAt     = realShowWatchedAt ?? DateTimeOffset.UtcNow;
+
+        foreach (var season in s.Seasons)
+        {
+            foreach (var ep in season.Episodes ?? [])
+            {
+                var key = $"simkl:{showId}:s{season.Number}e{ep.Number}";
+                if (seenKeys.Contains(key)) continue;
+                seenKeys.Add(key);
+
+                var realEpWatchedAt = TryParseOffset(ep.WatchedAt);
+                var epWatchedAt = realEpWatchedAt ?? showWatchedAt;
+                if (since.HasValue && epWatchedAt < since.Value) continue;
+
+                result.Add(new ImportedWatchEvent(
+                    ExternalId:      key,
+                    AdditionalIds:   BuildIds(s.Show.Ids, kind),
+                    MediaType:       anime ? "anime_episode" : "tv_episode",
+                    Title:           $"S{season.Number:D2}E{ep.Number:D2}",
+                    Year:            s.Show.Year,
+                    WatchedAt:       epWatchedAt,
+                    ProgressPercent: 100.0,
+                    // Borrowing the SHOW's own last-watched date for an episode SIMKL never
+                    // gave its own timestamp is still an approximation for that episode --
+                    // real per-episode data always wins, but "the whole show shares one date"
+                    // must not be reported as if it were that episode's genuine watch time.
+                    WatchedAtIsApproximate: realEpWatchedAt is null,
+                    ShowExternalId:  $"simkl:{kind}:{showId}",
+                    ShowTitle:       s.Show.Title,
+                    SeasonNumber:    season.Number,
+                    EpisodeNumber:   ep.Number));
+            }
+        }
+    }
+
+    /// <summary>
+    /// The whole watch history of one show Chronicle already holds, found in the user's SIMKL list by any id in
+    /// <paramref name="knownIds"/> (simkl, imdb, tmdb, tvdb). No "since": see <see cref="IImportProvider.GetShowWatchHistoryAsync"/>.
+    /// Reads the same two extended lists the periodic pull already reads; empty when the show is not on the user's list.
+    /// </summary>
+    public async Task<List<ImportedWatchEvent>> GetShowWatchHistoryAsync(
+        IReadOnlyDictionary<string, string> knownIds, CancellationToken ct = default)
+    {
+        EnsureAuthenticated();
+        var client = GetOrCreateClient();
+        var result = new List<ImportedWatchEvent>();
+        if (knownIds.Count == 0) return result;
+
+        var (shows, anime) = await GetExtendedListsCachedAsync(client, ct);
+
+        var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var s in shows)
+            if (SameShow(s.Show.Ids, "tv", knownIds))
+                AddExtendedShowEpisodes(s, anime: false, since: null, seenKeys, result);
+        foreach (var a in anime)
+            if (SameShow(a.Show.Ids, "anime", knownIds))
+                AddExtendedShowEpisodes(a, anime: true, since: null, seenKeys, result);
+        return result;
+    }
+
+    // The two extended lists are the whole library and cost a full download each. A batch of single-show pulls (the periodic
+    // backfill asks about up to 15 shows in a row) reads them once and reuses them for two minutes.
+    private readonly SemaphoreSlim _extListLock = new(1, 1);
+    private (DateTimeOffset At, List<AllItemsItemExtended> Shows, List<AllItemsItemExtended> Anime)? _extListCache;
+
+    private async Task<(List<AllItemsItemExtended> Shows, List<AllItemsItemExtended> Anime)> GetExtendedListsCachedAsync(
+        SimklClient client, CancellationToken ct)
+    {
+        await _extListLock.WaitAsync(ct);
+        try
+        {
+            if (_extListCache is { } c && DateTimeOffset.UtcNow - c.At < TimeSpan.FromMinutes(2))
+                return (c.Shows, c.Anime);
+
+            var showsTask = client.GetShowsExtendedAsync(ct);
+            var animeTask = client.GetAnimeExtendedAsync(ct);
+            await Task.WhenAll(showsTask, animeTask);
+            _extListCache = (DateTimeOffset.UtcNow, showsTask.Result, animeTask.Result);
+            return (showsTask.Result, animeTask.Result);
+        }
+        finally { _extListLock.Release(); }
+    }
+
+    /// <summary>
+    /// True when a SIMKL show and a Chronicle item share an id. Only the id itself is compared (the text after the last
+    /// colon), because the host stores the same id in different shapes ("simkl:tv:123", "tv:52814", "tvdb:366524"). A movie
+    /// id never matches a show: the tmdb/tvdb entries are skipped when the stored value is namespaced "movie".
+    /// </summary>
+    internal static bool SameShow(SimklIds ids, string kind, IReadOnlyDictionary<string, string> knownIds)
+    {
+        static string Tail(string v) { var k = v.LastIndexOf(':'); return (k >= 0 ? v[(k + 1)..] : v).Trim(); }
+        static bool IsMovieNs(string v) => v.StartsWith("movie:", StringComparison.OrdinalIgnoreCase);
+
+        foreach (var (source, value) in BuildIds(ids, kind))
+        {
+            if (!knownIds.TryGetValue(source, out var known) || string.IsNullOrWhiteSpace(known)) continue;
+            if (source is "tmdb" or "tvdb" && IsMovieNs(known)) continue;
+            if (string.Equals(Tail(known), Tail(value), StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
     }
 
     // ── Import — ratings ──────────────────────────────────────────────────────
